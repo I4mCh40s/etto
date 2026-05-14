@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Etto</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Etto controls">
+        <header class="brand">
+          <div class="brand-mark" aria-hidden="true">E</div>
+          <div>
+            <h1>Etto</h1>
+            <p>Temporal CRT image lab</p>
+          </div>
+        </header>
+
+        <section class="panel import-panel">
+          <div class="panel-heading">
+            <h2>Source</h2>
+            <span id="sourceMeta">sample loaded</span>
+          </div>
+          <div class="file-row">
+            <label class="file-button">
+              <input id="imageInput" type="file" accept="image/png,image/jpeg,image/webp" multiple />
+              <span>Import Images</span>
+            </label>
+            <label class="file-button secondary">
+              <input id="videoInput" type="file" accept="video/mp4,video/webm,video/quicktime" />
+              <span>Import Video</span>
+            </label>
+          </div>
+          <div class="segmented" role="tablist" aria-label="Source mode">
+            <button id="imageModeButton" class="active" type="button">Image</button>
+            <button id="videoModeButton" type="button">Video</button>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-heading">
+            <h2>Preset</h2>
+            <span>one-click looks</span>
+          </div>
+          <label class="control">
+            <span>Look</span>
+            <select id="presetSelect">
+              <option value="reference-crt">Reference CRT Trail</option>
+              <option value="handheld-crt">Handheld CRT</option>
+              <option value="print-glitch">Print Glitch</option>
+            </select>
+          </label>
+          <button id="applyPreset" class="full-button" type="button">Apply Preset</button>
+        </section>
+
+        <section class="panel">
+          <div class="panel-heading">
+            <h2>Algorithm</h2>
+            <span id="algorithmCount">63 set</span>
+          </div>
+          <label class="control">
+            <span>Family</span>
+            <select id="algorithmSelect"></select>
+          </label>
+          <label class="control">
+            <span>Resolution</span>
+            <input id="resolution" type="range" min="0.3" max="1" step="0.05" value="0.65" />
+          </label>
+          <label class="control">
+            <span>Threshold</span>
+            <input id="threshold" type="range" min="16" max="240" step="1" value="132" />
+          </label>
+          <label class="control">
+            <span>Pattern Size</span>
+            <input id="patternSize" type="range" min="0.5" max="4" step="0.1" value="1" />
+          </label>
+          <label class="control">
+            <span>Error Strength</span>
+            <input id="errorStrength" type="range" min="0" max="1.4" step="0.05" value="0.95" />
+          </label>
+          <label class="control">
+            <span>Temporal Phase</span>
+            <input id="phase" type="range" min="0" max="360" step="1" value="0" />
+          </label>
+        </section>
+
+        <section class="panel">
+          <div class="panel-heading">
+            <h2>Color</h2>
+            <span id="palettePreview" class="swatches"></span>
+          </div>
+          <label class="control">
+            <span>Palette</span>
+            <select id="paletteSelect"></select>
+          </label>
+          <label class="control">
+            <span>Depth</span>
+            <input id="depth" type="range" min="2" max="8" step="1" value="4" />
+          </label>
+          <label class="control">
+            <span>Brightness</span>
+            <input id="brightness" type="range" min="-80" max="80" step="1" value="0" />
+          </label>
+          <label class="control">
+            <span>Contrast</span>
+            <input id="contrast" type="range" min="-80" max="100" step="1" value="18" />
+          </label>
+          <button id="extractPalette" class="full-button" type="button">Extract Palette</button>
+        </section>
+
+        <section class="panel">
+          <div class="panel-heading">
+            <h2>Effects</h2>
+            <button id="addEffect" class="icon-button" type="button" title="Add effect">+</button>
+          </div>
+          <label class="control">
+            <span>Effect</span>
+            <select id="effectSelect">
+              <option value="epsilon">Epsilon Glow</option>
+              <option value="blur">CRT Blur</option>
+              <option value="trail">Signal Trail</option>
+              <option value="bloom">Phosphor Bloom</option>
+              <option value="vignette">Vignette</option>
+              <option value="noise">Signal Noise</option>
+              <option value="jpeg">JPEG Glitch</option>
+              <option value="chromatic">Chromatic Aberration</option>
+              <option value="scanlines">Scanlines</option>
+              <option value="cmyk">CMYK Halftone</option>
+            </select>
+          </label>
+          <label class="control">
+            <span>Blur</span>
+            <input id="blur" type="range" min="0" max="5" step="0.25" value="0.75" />
+          </label>
+          <div id="effectStack" class="effect-stack" aria-live="polite"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-heading">
+            <h2>Export</h2>
+            <span id="exportMeta">PNG ready</span>
+          </div>
+          <div class="export-grid">
+            <button id="exportPng" type="button">PNG</button>
+            <button id="exportJpg" type="button">JPG</button>
+            <button id="exportSvg" type="button">SVG</button>
+            <button id="batchExport" type="button">Batch</button>
+            <button id="exportVideo" class="wide-button" type="button">Video</button>
+            <button id="exportAnimation" class="wide-button" type="button">Animate Still</button>
+          </div>
+          <label class="control">
+            <span>Duration</span>
+            <select id="animationDuration">
+              <option value="5">5 seconds</option>
+              <option value="10">10 seconds</option>
+            </select>
+          </label>
+          <label class="toggle">
+            <input id="lossless" type="checkbox" checked />
+            <span>Lossless export</span>
+          </label>
+        </section>
+      </aside>
+
+      <main class="workspace">
+        <div class="topbar">
+          <div class="view-tabs" role="tablist" aria-label="Canvas view">
+            <button id="compareButton" class="active" type="button">Compare</button>
+            <button id="processedButton" type="button">Processed</button>
+            <button id="sourceButton" type="button">Source</button>
+          </div>
+          <div class="playback">
+            <button id="playButton" class="icon-button" type="button" title="Play or pause video">&gt;</button>
+            <input id="timeline" type="range" min="0" max="1000" value="0" />
+            <span id="timecode">00:00</span>
+          </div>
+        </div>
+
+        <section class="canvas-stage" aria-label="Etto preview">
+          <div id="compareWrap" class="compare-wrap">
+            <div class="canvas-card">
+              <div class="canvas-label">Original</div>
+              <canvas id="sourceCanvas"></canvas>
+            </div>
+            <div class="canvas-card">
+              <div class="canvas-label">Processed</div>
+              <canvas id="outputCanvas"></canvas>
+            </div>
+          </div>
+          <canvas id="soloCanvas" class="solo-canvas hidden"></canvas>
+          <video id="sourceVideo" class="hidden" playsinline muted></video>
+        </section>
+
+        <footer class="statusbar">
+          <span id="statusText">Ready. Drag sliders to redraw the image.</span>
+          <span id="renderMeta">0 ms</span>
+        </footer>
+      </main>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
