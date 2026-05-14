@@ -349,6 +349,12 @@ input[type="range"] {
   border-color: var(--text-primary);
 }
 
+.danger-button {
+  background: rgba(0, 0, 0, 0.46);
+  color: var(--text-primary);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
 .swatches {
   display: inline-flex;
   gap: 4px;

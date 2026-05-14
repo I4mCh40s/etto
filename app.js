@@ -11,6 +11,7 @@ const controls = {
   videoInput: document.querySelector("#videoInput"),
   imageModeButton: document.querySelector("#imageModeButton"),
   videoModeButton: document.querySelector("#videoModeButton"),
+  resetButton: document.querySelector("#resetButton"),
   presetSelect: document.querySelector("#presetSelect"),
   applyPreset: document.querySelector("#applyPreset"),
   algorithmSelect: document.querySelector("#algorithmSelect"),
@@ -209,6 +210,7 @@ function populateSelects() {
 function bindEvents() {
   controls.imageInput.addEventListener("change", handleImages);
   controls.videoInput.addEventListener("change", handleVideo);
+  controls.resetButton.addEventListener("click", resetWorkspace);
   controls.applyPreset.addEventListener("click", applyPreset);
   controls.imageModeButton.addEventListener("click", () => setMode("image"));
   controls.videoModeButton.addEventListener("click", () => setMode("video"));
@@ -351,6 +353,38 @@ function handleVideo(event) {
   state.sourceName = file.name.replace(/\.[^.]+$/, "");
   setMode("video");
   sourceVideo.load();
+}
+
+function resetWorkspace() {
+  if (sourceVideo && !sourceVideo.paused) sourceVideo.pause();
+  controls.algorithmSelect.value = "floyd";
+  controls.paletteSelect.value = "Game Console";
+  controls.effectSelect.value = "epsilon";
+  controls.resolution.value = "0.65";
+  controls.threshold.value = "132";
+  controls.patternSize.value = "1";
+  controls.errorStrength.value = "0.95";
+  controls.phase.value = "0";
+  controls.depth.value = "4";
+  controls.brightness.value = "0";
+  controls.contrast.value = "18";
+  controls.blur.value = "0.75";
+  controls.textEnabled.checked = false;
+  controls.textContent.value = "ETTO";
+  controls.textFont.value = "Inter, Arial, sans-serif";
+  controls.textColor.value = "#ffffff";
+  controls.textSize.value = "14";
+  controls.textX.value = "50";
+  controls.textY.value = "50";
+  controls.textAlign.value = "center";
+  controls.animationDuration.value = "5";
+  controls.lossless.checked = true;
+  state.effects = [];
+  setView("compare");
+  updatePalettePreview();
+  renderEffectStack();
+  controls.statusText.textContent = "Reset controls and removed effects.";
+  scheduleRender();
 }
 
 function applyPreset() {
