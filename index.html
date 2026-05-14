@@ -36,7 +36,10 @@
             <button id="imageModeButton" class="active" type="button">Image</button>
             <button id="videoModeButton" type="button">Video</button>
           </div>
-          <button id="resetButton" class="full-button danger-button" type="button">Reset</button>
+          <div class="utility-row">
+            <button id="invertButton" class="danger-button" type="button">Invert Colors</button>
+            <button id="resetButton" class="danger-button" type="button">Reset</button>
+          </div>
         </section>
 
         <section class="panel">
@@ -49,7 +52,9 @@
             <select id="presetSelect">
               <option value="reference-crt">Reference CRT Trail</option>
               <option value="handheld-crt">Handheld CRT</option>
-              <option value="print-glitch">Print Glitch</option>
+              <option value="vhs-ghost">VHS Ghost</option>
+              <option value="amber-terminal">Amber Terminal</option>
+              <option value="arcade-poster">Arcade Poster</option>
             </select>
           </label>
           <button id="applyPreset" class="full-button" type="button">Apply Preset</button>
@@ -119,49 +124,51 @@
             <input id="textEnabled" type="checkbox" />
             <span>Enable text</span>
           </label>
-          <label class="control">
-            <span>Text</span>
-            <input id="textContent" type="text" value="ETTO" maxlength="80" />
-          </label>
-          <label class="control">
-            <span>Font</span>
-            <select id="textFont">
-              <option value="Inter, Arial, sans-serif">Inter</option>
-              <option value="Georgia, serif">Serif</option>
-              <option value="'Courier New', monospace">Mono</option>
-              <option value="Impact, Haettenschweiler, sans-serif">Impact</option>
-            </select>
-          </label>
-          <label class="control">
-            <span>Color</span>
-            <input id="textColor" type="color" value="#ffffff" />
-          </label>
-          <label class="control">
-            <span>Size</span>
-            <input id="textSize" type="range" min="4" max="40" step="1" value="14" />
-          </label>
-          <label class="control">
-            <span>X Position</span>
-            <input id="textX" type="range" min="0" max="100" step="1" value="50" />
-          </label>
-          <label class="control">
-            <span>Y Position</span>
-            <input id="textY" type="range" min="0" max="100" step="1" value="50" />
-          </label>
-          <label class="control">
-            <span>Align</span>
-            <select id="textAlign">
-              <option value="center">Center</option>
-              <option value="left">Left</option>
-              <option value="right">Right</option>
-            </select>
-          </label>
+          <div id="textControls" class="text-muted-controls">
+            <label class="control">
+              <span>Text</span>
+              <input id="textContent" type="text" value="ETTO" maxlength="80" />
+            </label>
+            <label class="control">
+              <span>Font</span>
+              <select id="textFont">
+                <option value="Inter, Arial, sans-serif">Inter</option>
+                <option value="Georgia, serif">Serif</option>
+                <option value="'Courier New', monospace">Mono</option>
+                <option value="Impact, Haettenschweiler, sans-serif">Impact</option>
+              </select>
+            </label>
+            <label class="control">
+              <span>Color</span>
+              <input id="textColor" type="color" value="#ffffff" />
+            </label>
+            <label class="control">
+              <span>Size</span>
+              <input id="textSize" type="range" min="4" max="40" step="1" value="14" />
+            </label>
+            <label class="control">
+              <span>X Position</span>
+              <input id="textX" type="range" min="0" max="100" step="1" value="50" />
+            </label>
+            <label class="control">
+              <span>Y Position</span>
+              <input id="textY" type="range" min="0" max="100" step="1" value="50" />
+            </label>
+            <label class="control">
+              <span>Align</span>
+              <select id="textAlign">
+                <option value="center">Center</option>
+                <option value="left">Left</option>
+                <option value="right">Right</option>
+              </select>
+            </label>
+          </div>
         </section>
 
         <section class="panel">
           <div class="panel-heading">
             <h2>Effects</h2>
-            <button id="addEffect" class="icon-button" type="button" title="Add effect">+</button>
+            <button id="addEffect" class="add-button" type="button" title="Add selected effect">Add</button>
           </div>
           <label class="control">
             <span>Effect</span>
@@ -179,10 +186,20 @@
             </select>
           </label>
           <label class="control">
-            <span>Blur</span>
+            <span>Global Blur</span>
             <input id="blur" type="range" min="0" max="5" step="0.25" value="0.75" />
           </label>
           <div id="effectStack" class="effect-stack" aria-live="polite"></div>
+          <div id="effectEditor" class="effect-editor hidden">
+            <div class="panel-heading compact-heading">
+              <h2>Selected Effect</h2>
+              <span id="selectedEffectName">Effect</span>
+            </div>
+            <label class="control">
+              <span><span id="selectedEffectParam">Strength</span> <em id="selectedEffectValue">0.55</em></span>
+              <input id="selectedEffectAmount" type="range" min="0" max="1.5" step="0.01" value="0.55" />
+            </label>
+          </div>
         </section>
 
         <section class="panel">

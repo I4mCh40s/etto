@@ -11,6 +11,7 @@ const controls = {
   videoInput: document.querySelector("#videoInput"),
   imageModeButton: document.querySelector("#imageModeButton"),
   videoModeButton: document.querySelector("#videoModeButton"),
+  invertButton: document.querySelector("#invertButton"),
   resetButton: document.querySelector("#resetButton"),
   presetSelect: document.querySelector("#presetSelect"),
   applyPreset: document.querySelector("#applyPreset"),
@@ -19,6 +20,11 @@ const controls = {
   effectSelect: document.querySelector("#effectSelect"),
   addEffect: document.querySelector("#addEffect"),
   effectStack: document.querySelector("#effectStack"),
+  effectEditor: document.querySelector("#effectEditor"),
+  selectedEffectName: document.querySelector("#selectedEffectName"),
+  selectedEffectParam: document.querySelector("#selectedEffectParam"),
+  selectedEffectValue: document.querySelector("#selectedEffectValue"),
+  selectedEffectAmount: document.querySelector("#selectedEffectAmount"),
   resolution: document.querySelector("#resolution"),
   threshold: document.querySelector("#threshold"),
   patternSize: document.querySelector("#patternSize"),
@@ -28,6 +34,7 @@ const controls = {
   brightness: document.querySelector("#brightness"),
   contrast: document.querySelector("#contrast"),
   textEnabled: document.querySelector("#textEnabled"),
+  textControls: document.querySelector("#textControls"),
   textContent: document.querySelector("#textContent"),
   textFont: document.querySelector("#textFont"),
   textColor: document.querySelector("#textColor"),
@@ -132,6 +139,9 @@ const palettes = {
   "Mono Ink": ["#0b0d0e", "#393f45", "#87919a", "#f8f5eb"],
   "Bubblegum CRT": ["#17111f", "#6d3b9c", "#e86aa8", "#ffc6df", "#f7f1ff"],
   "Reference CRT": ["#050408", "#160b24", "#241636", "#0d2a4b", "#25b8d7", "#f24ba8", "#fff8fb"],
+  "VHS Ghost": ["#05040a", "#17112c", "#262053", "#0f6a88", "#e24486", "#73f7e6", "#fff7fb"],
+  "Amber Terminal": ["#050300", "#1d1100", "#5a3200", "#b86d13", "#ffd37a", "#fff4d1"],
+  "Arcade Poster": ["#050814", "#13213f", "#ff2d55", "#ffcc00", "#00d084", "#00a8ff", "#fff8e8"],
   "Print CMYK": ["#0c1012", "#00aeef", "#ec008c", "#fff200", "#f7f5ed"],
   "Warm Poster": ["#141414", "#703c32", "#c65f46", "#f0b46f", "#fff0c2"],
   "Extracted": ["#101311", "#3a443f", "#9ade67", "#ff7ab6"],
@@ -166,9 +176,11 @@ let state = {
   imageFiles: [],
   videoUrl: null,
   effects: [{ type: "epsilon", amount: 0.55 }],
+  selectedEffectIndex: 0,
   raf: null,
   isExportingVideo: false,
   isExportingAnimation: false,
+  invertColors: false,
 };
 
 function init() {
@@ -210,8 +222,11 @@ function populateSelects() {
 function bindEvents() {
   controls.imageInput.addEventListener("change", handleImages);
   controls.videoInput.addEventListener("change", handleVideo);
+  controls.invertButton.addEventListener("click", toggleInvert);
   controls.resetButton.addEventListener("click", resetWorkspace);
   controls.applyPreset.addEventListener("click", applyPreset);
+  controls.selectedEffectAmount.addEventListener("input", updateSelectedEffectAmount);
+  controls.textEnabled.addEventListener("input", updateTextControlsState);
   controls.imageModeButton.addEventListener("click", () => setMode("image"));
   controls.videoModeButton.addEventListener("click", () => setMode("video"));
   controls.extractPalette.addEventListener("click", extractPalette);
@@ -355,6 +370,17 @@ function handleVideo(event) {
   sourceVideo.load();
 }
 
+function toggleInvert() {
+  state.invertColors = !state.invertColors;
+  updateInvertButton();
+  controls.statusText.textContent = state.invertColors ? "Invert colors enabled." : "Invert colors disabled.";
+  scheduleRender();
+}
+
+function updateInvertButton() {
+  controls.invertButton.classList.toggle("active-toggle", state.invertColors);
+}
+
 function resetWorkspace() {
   if (sourceVideo && !sourceVideo.paused) sourceVideo.pause();
   controls.algorithmSelect.value = "floyd";
@@ -380,11 +406,19 @@ function resetWorkspace() {
   controls.animationDuration.value = "5";
   controls.lossless.checked = true;
   state.effects = [];
+  state.selectedEffectIndex = -1;
+  state.invertColors = false;
+  updateInvertButton();
+  updateTextControlsState();
   setView("compare");
   updatePalettePreview();
   renderEffectStack();
   controls.statusText.textContent = "Reset controls and removed effects.";
   scheduleRender();
+}
+
+function updateTextControlsState() {
+  controls.textControls.classList.toggle("text-muted-controls", !controls.textEnabled.checked);
 }
 
 function applyPreset() {
@@ -427,24 +461,66 @@ function applyPreset() {
       { type: "vignette", amount: 0.42 },
     ];
     controls.statusText.textContent = "Applied Handheld CRT preset.";
-  } else {
-    controls.algorithmSelect.value = "print-plate";
-    controls.paletteSelect.value = "Print CMYK";
-    controls.resolution.value = "0.82";
-    controls.threshold.value = "150";
-    controls.patternSize.value = "1.8";
-    controls.errorStrength.value = "1.1";
-    controls.depth.value = "5";
-    controls.brightness.value = "4";
-    controls.contrast.value = "52";
-    controls.blur.value = "0.25";
+  } else if (preset === "vhs-ghost") {
+    controls.algorithmSelect.value = "row-tear";
+    controls.paletteSelect.value = "VHS Ghost";
+    controls.resolution.value = "0.78";
+    controls.threshold.value = "88";
+    controls.patternSize.value = "0.8";
+    controls.errorStrength.value = "1.25";
+    controls.phase.value = "38";
+    controls.depth.value = "7";
+    controls.brightness.value = "-18";
+    controls.contrast.value = "55";
+    controls.blur.value = "1";
     state.effects = [
-      { type: "jpeg", amount: 0.58 },
-      { type: "cmyk", amount: 0.62 },
-      { type: "noise", amount: 0.2 },
+      { type: "trail", amount: 0.68 },
+      { type: "chromatic", amount: 0.92 },
+      { type: "jpeg", amount: 0.42 },
+      { type: "scanlines", amount: 0.54 },
+      { type: "noise", amount: 0.36 },
+      { type: "vignette", amount: 0.58 },
     ];
-    controls.statusText.textContent = "Applied Print Glitch preset.";
+    controls.statusText.textContent = "Applied VHS Ghost preset.";
+  } else if (preset === "amber-terminal") {
+    controls.algorithmSelect.value = "ascii";
+    controls.paletteSelect.value = "Amber Terminal";
+    controls.resolution.value = "0.7";
+    controls.threshold.value = "118";
+    controls.patternSize.value = "1.35";
+    controls.errorStrength.value = "0.55";
+    controls.phase.value = "12";
+    controls.depth.value = "5";
+    controls.brightness.value = "-34";
+    controls.contrast.value = "84";
+    controls.blur.value = "0.65";
+    state.effects = [
+      { type: "bloom", amount: 0.58 },
+      { type: "scanlines", amount: 0.72 },
+      { type: "noise", amount: 0.18 },
+      { type: "vignette", amount: 0.82 },
+    ];
+    controls.statusText.textContent = "Applied Amber Terminal preset.";
+  } else if (preset === "arcade-poster") {
+    controls.algorithmSelect.value = "poster";
+    controls.paletteSelect.value = "Arcade Poster";
+    controls.resolution.value = "0.9";
+    controls.threshold.value = "164";
+    controls.patternSize.value = "2.2";
+    controls.errorStrength.value = "0.35";
+    controls.phase.value = "0";
+    controls.depth.value = "7";
+    controls.brightness.value = "6";
+    controls.contrast.value = "76";
+    controls.blur.value = "0";
+    state.effects = [
+      { type: "cmyk", amount: 0.38 },
+      { type: "epsilon", amount: 0.28 },
+      { type: "noise", amount: 0.08 },
+    ];
+    controls.statusText.textContent = "Applied Arcade Poster preset.";
   }
+  state.selectedEffectIndex = state.effects.length ? 0 : -1;
   updatePalettePreview();
   renderEffectStack();
   scheduleRender();
@@ -505,6 +581,7 @@ function render(options = {}) {
   outputCanvas.width = width;
   outputCanvas.height = height;
   sourceCtx.drawImage(source, 0, 0, width, height);
+  applySourceInvert(width, height);
   drawTextLayer(width, height);
 
   const imageData = sourceCtx.getImageData(0, 0, width, height);
@@ -522,6 +599,18 @@ function render(options = {}) {
 function getDrawableSource() {
   if (state.mode === "video" && sourceVideo.readyState >= 2) return sourceVideo;
   return state.sourceImage;
+}
+
+function applySourceInvert(width, height) {
+  if (!state.invertColors) return;
+  const imageData = sourceCtx.getImageData(0, 0, width, height);
+  const data = imageData.data;
+  for (let i = 0; i < data.length; i += 4) {
+    data[i] = 255 - data[i];
+    data[i + 1] = 255 - data[i + 1];
+    data[i + 2] = 255 - data[i + 2];
+  }
+  sourceCtx.putImageData(imageData, 0, 0);
 }
 
 function drawTextLayer(width, height) {
@@ -1046,6 +1135,7 @@ function extractPalette() {
 
 function addEffect() {
   state.effects.push({ type: controls.effectSelect.value, amount: 0.55 });
+  state.selectedEffectIndex = state.effects.length - 1;
   renderEffectStack();
   scheduleRender();
 }
@@ -1053,16 +1143,23 @@ function addEffect() {
 function renderEffectStack() {
   controls.effectStack.innerHTML = "";
   if (!state.effects.length) {
+    state.selectedEffectIndex = -1;
     const empty = document.createElement("div");
     empty.className = "effect-row";
     empty.innerHTML = "<strong>No effects</strong>";
     controls.effectStack.append(empty);
+    updateEffectEditor();
     return;
+  }
+
+  if (state.selectedEffectIndex < 0 || state.selectedEffectIndex >= state.effects.length) {
+    state.selectedEffectIndex = 0;
   }
 
   state.effects.forEach((effect, index) => {
     const row = document.createElement("div");
-    row.className = "effect-row";
+    row.className = `effect-row${index === state.selectedEffectIndex ? " selected" : ""}`;
+    row.addEventListener("click", () => selectEffect(index));
     const label = document.createElement("strong");
     label.textContent = effectName(effect.type);
     const up = stackButton("^", "Move effect up", () => moveEffect(index, -1));
@@ -1071,6 +1168,7 @@ function renderEffectStack() {
     row.append(label, up, down, remove);
     controls.effectStack.append(row);
   });
+  updateEffectEditor();
 }
 
 function stackButton(text, title, handler) {
@@ -1078,8 +1176,16 @@ function stackButton(text, title, handler) {
   button.type = "button";
   button.textContent = text;
   button.title = title;
-  button.addEventListener("click", handler);
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    handler();
+  });
   return button;
+}
+
+function selectEffect(index) {
+  state.selectedEffectIndex = index;
+  renderEffectStack();
 }
 
 function moveEffect(index, delta) {
@@ -1087,14 +1193,57 @@ function moveEffect(index, delta) {
   if (next < 0 || next >= state.effects.length) return;
   const [effect] = state.effects.splice(index, 1);
   state.effects.splice(next, 0, effect);
+  state.selectedEffectIndex = next;
   renderEffectStack();
   scheduleRender();
 }
 
 function removeEffect(index) {
   state.effects.splice(index, 1);
+  if (state.effects.length === 0) state.selectedEffectIndex = -1;
+  else state.selectedEffectIndex = Math.min(index, state.effects.length - 1);
   renderEffectStack();
   scheduleRender();
+}
+
+function updateSelectedEffectAmount() {
+  const effect = state.effects[state.selectedEffectIndex];
+  if (!effect) return;
+  effect.amount = Number(controls.selectedEffectAmount.value);
+  updateEffectEditor();
+  scheduleRender();
+}
+
+function updateEffectEditor() {
+  const effect = state.effects[state.selectedEffectIndex];
+  controls.effectEditor.classList.toggle("hidden", !effect);
+  if (!effect) return;
+
+  const meta = effectParamMeta(effect.type);
+  controls.selectedEffectName.textContent = effectName(effect.type);
+  controls.selectedEffectParam.textContent = meta.label;
+  controls.selectedEffectAmount.min = meta.min;
+  controls.selectedEffectAmount.max = meta.max;
+  controls.selectedEffectAmount.step = meta.step;
+  controls.selectedEffectAmount.value = String(effect.amount);
+  controls.selectedEffectValue.textContent = meta.format(effect.amount);
+}
+
+function effectParamMeta(type) {
+  const percent = (value) => `${Math.round(value * 100)}%`;
+  const metas = {
+    epsilon: { label: "Glow", min: "0", max: "1.5", step: "0.01", format: percent },
+    blur: { label: "Blur Radius", min: "0", max: "1.5", step: "0.01", format: percent },
+    trail: { label: "Trail Length", min: "0", max: "1.5", step: "0.01", format: percent },
+    bloom: { label: "Bloom", min: "0", max: "1.5", step: "0.01", format: percent },
+    jpeg: { label: "Block Shift", min: "0", max: "1.5", step: "0.01", format: percent },
+    chromatic: { label: "Split Size", min: "0", max: "1.5", step: "0.01", format: (value) => `${Math.round(value * 10)} px` },
+    scanlines: { label: "Line Strength", min: "0", max: "1.5", step: "0.01", format: percent },
+    vignette: { label: "Falloff", min: "0", max: "1.5", step: "0.01", format: percent },
+    noise: { label: "Noise", min: "0", max: "1.5", step: "0.01", format: percent },
+    cmyk: { label: "Plate Offset", min: "0", max: "1.5", step: "0.01", format: percent },
+  };
+  return metas[type] || { label: "Strength", min: "0", max: "1.5", step: "0.01", format: percent };
 }
 
 function effectName(type) {
