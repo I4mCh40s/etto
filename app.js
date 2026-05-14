@@ -26,6 +26,14 @@ const controls = {
   depth: document.querySelector("#depth"),
   brightness: document.querySelector("#brightness"),
   contrast: document.querySelector("#contrast"),
+  textEnabled: document.querySelector("#textEnabled"),
+  textContent: document.querySelector("#textContent"),
+  textFont: document.querySelector("#textFont"),
+  textColor: document.querySelector("#textColor"),
+  textSize: document.querySelector("#textSize"),
+  textX: document.querySelector("#textX"),
+  textY: document.querySelector("#textY"),
+  textAlign: document.querySelector("#textAlign"),
   blur: document.querySelector("#blur"),
   extractPalette: document.querySelector("#extractPalette"),
   exportPng: document.querySelector("#exportPng"),
@@ -235,6 +243,14 @@ function bindEvents() {
     controls.depth,
     controls.brightness,
     controls.contrast,
+    controls.textEnabled,
+    controls.textContent,
+    controls.textFont,
+    controls.textColor,
+    controls.textSize,
+    controls.textX,
+    controls.textY,
+    controls.textAlign,
     controls.blur,
     controls.lossless,
   ].forEach((control) => {
@@ -455,6 +471,7 @@ function render(options = {}) {
   outputCanvas.width = width;
   outputCanvas.height = height;
   sourceCtx.drawImage(source, 0, 0, width, height);
+  drawTextLayer(width, height);
 
   const imageData = sourceCtx.getImageData(0, 0, width, height);
   applyPreAdjustments(imageData);
@@ -471,6 +488,29 @@ function render(options = {}) {
 function getDrawableSource() {
   if (state.mode === "video" && sourceVideo.readyState >= 2) return sourceVideo;
   return state.sourceImage;
+}
+
+function drawTextLayer(width, height) {
+  if (!controls.textEnabled.checked) return;
+  const text = controls.textContent.value.trim();
+  if (!text) return;
+
+  const sizePercent = Number(controls.textSize.value);
+  const fontSize = Math.max(8, Math.round((Math.min(width, height) * sizePercent) / 100));
+  const x = (Number(controls.textX.value) / 100) * width;
+  const y = (Number(controls.textY.value) / 100) * height;
+
+  sourceCtx.save();
+  sourceCtx.font = `700 ${fontSize}px ${controls.textFont.value}`;
+  sourceCtx.fillStyle = controls.textColor.value;
+  sourceCtx.textAlign = controls.textAlign.value;
+  sourceCtx.textBaseline = "middle";
+  sourceCtx.shadowColor = "rgba(0, 0, 0, 0.35)";
+  sourceCtx.shadowBlur = Math.max(2, fontSize * 0.08);
+  sourceCtx.shadowOffsetX = Math.max(1, fontSize * 0.03);
+  sourceCtx.shadowOffsetY = Math.max(1, fontSize * 0.03);
+  sourceCtx.fillText(text, x, y, width * 0.92);
+  sourceCtx.restore();
 }
 
 function applyPreAdjustments(imageData) {

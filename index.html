@@ -111,6 +111,54 @@
 
         <section class="panel">
           <div class="panel-heading">
+            <h2>Text Layer</h2>
+            <span>pre-effect</span>
+          </div>
+          <label class="toggle">
+            <input id="textEnabled" type="checkbox" />
+            <span>Enable text</span>
+          </label>
+          <label class="control">
+            <span>Text</span>
+            <input id="textContent" type="text" value="ETTO" maxlength="80" />
+          </label>
+          <label class="control">
+            <span>Font</span>
+            <select id="textFont">
+              <option value="Inter, Arial, sans-serif">Inter</option>
+              <option value="Georgia, serif">Serif</option>
+              <option value="'Courier New', monospace">Mono</option>
+              <option value="Impact, Haettenschweiler, sans-serif">Impact</option>
+            </select>
+          </label>
+          <label class="control">
+            <span>Color</span>
+            <input id="textColor" type="color" value="#ffffff" />
+          </label>
+          <label class="control">
+            <span>Size</span>
+            <input id="textSize" type="range" min="4" max="40" step="1" value="14" />
+          </label>
+          <label class="control">
+            <span>X Position</span>
+            <input id="textX" type="range" min="0" max="100" step="1" value="50" />
+          </label>
+          <label class="control">
+            <span>Y Position</span>
+            <input id="textY" type="range" min="0" max="100" step="1" value="50" />
+          </label>
+          <label class="control">
+            <span>Align</span>
+            <select id="textAlign">
+              <option value="center">Center</option>
+              <option value="left">Left</option>
+              <option value="right">Right</option>
+            </select>
+          </label>
+        </section>
+
+        <section class="panel">
+          <div class="panel-heading">
             <h2>Effects</h2>
             <button id="addEffect" class="icon-button" type="button" title="Add effect">+</button>
           </div>
