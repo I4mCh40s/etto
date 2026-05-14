@@ -271,8 +271,8 @@ input:focus-visible,
 }
 
 .view-tabs {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  width: min(440px, 100%);
+  grid-template-columns: 1fr;
+  width: min(160px, 100%);
   margin: 0;
 }
 

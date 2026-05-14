@@ -213,8 +213,8 @@ function bindEvents() {
   controls.exportVideo.addEventListener("click", exportVideo);
   controls.exportAnimation.addEventListener("click", exportAnimation);
   controls.compareButton.addEventListener("click", () => setView("compare"));
-  controls.processedButton.addEventListener("click", () => setView("processed"));
-  controls.sourceButton.addEventListener("click", () => setView("source"));
+  controls.processedButton?.addEventListener("click", () => setView("processed"));
+  controls.sourceButton?.addEventListener("click", () => setView("source"));
   controls.playButton.addEventListener("click", togglePlayback);
   controls.timeline.addEventListener("input", seekVideo);
   sourceVideo.addEventListener("loadedmetadata", updateVideoMeta);
@@ -296,8 +296,8 @@ function setMode(mode) {
 function setView(view) {
   state.view = view;
   controls.compareButton.classList.toggle("active", view === "compare");
-  controls.processedButton.classList.toggle("active", view === "processed");
-  controls.sourceButton.classList.toggle("active", view === "source");
+  controls.processedButton?.classList.toggle("active", view === "processed");
+  controls.sourceButton?.classList.toggle("active", view === "source");
   controls.compareWrap.classList.toggle("hidden", view !== "compare");
   soloCanvas.classList.toggle("hidden", view === "compare");
   drawSolo();
@@ -1038,14 +1038,17 @@ function effectName(type) {
   }[type] || type;
 }
 
-function exportRaster(type) {
-  outputCanvas.toBlob((blob) => {
-    if (!blob) return;
+async function exportRaster(type) {
+  render({ fullResolution: true });
+  const blob = await canvasToBlob(outputCanvas, type, controls.lossless.checked ? 1 : 0.86);
+  if (blob) {
     downloadBlob(blob, `${state.sourceName || "etto"}-${Date.now()}.${type === "image/png" ? "png" : "jpg"}`);
-  }, type, controls.lossless.checked ? 1 : 0.86);
+  }
+  scheduleRender();
 }
 
 function exportSvg() {
+  render({ fullResolution: true });
   const imageData = outputCtx.getImageData(0, 0, outputCanvas.width, outputCanvas.height);
   const step = Math.max(1, Math.round(outputCanvas.width / 180));
   const rects = [];
@@ -1058,6 +1061,7 @@ function exportSvg() {
   }
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${outputCanvas.width} ${outputCanvas.height}" width="${outputCanvas.width}" height="${outputCanvas.height}"><g fill="#000">${rects.join("")}</g></svg>`;
   downloadBlob(new Blob([svg], { type: "image/svg+xml" }), `${state.sourceName || "etto"}-black-vector.svg`);
+  scheduleRender();
 }
 
 async function batchExport() {
@@ -1074,7 +1078,7 @@ async function batchExport() {
         image.onload = () => {
           state.sourceImage = image;
           state.sourceName = file.name.replace(/\.[^.]+$/, "");
-          render();
+          render({ fullResolution: true });
           outputCanvas.toBlob((blob) => {
             if (blob) downloadBlob(blob, `${state.sourceName}-dither.png`);
             setTimeout(resolve, 120);
@@ -1086,6 +1090,7 @@ async function batchExport() {
     });
   }
   controls.statusText.textContent = "Batch export finished.";
+  scheduleRender();
 }
 
 async function exportVideo() {
@@ -1320,6 +1325,12 @@ function canvasToJpegBytes(canvas, quality) {
       }
       resolve(new Uint8Array(await blob.arrayBuffer()));
     }, "image/jpeg", quality);
+  });
+}
+
+function canvasToBlob(canvas, type, quality) {
+  return new Promise((resolve) => {
+    canvas.toBlob((blob) => resolve(blob), type, quality);
   });
 }
 
