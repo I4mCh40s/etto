@@ -221,7 +221,7 @@ function loadWatermark() {
   watermarkImage.onload = () => {
     state.watermarkReady = true;
   };
-  watermarkImage.src = "etto.svg";
+  watermarkImage.src = "etto.png";
 }
 
 function populateSelects() {
@@ -747,6 +747,7 @@ function updateSeedGate(message) {
   const unlocked = state.supporterUnlocked;
   controls.seedTools.classList.toggle("locked-tools", !unlocked);
   controls.unlockPanel.classList.toggle("unlocked-panel", unlocked);
+  controls.unlockPanel.classList.toggle("hidden", unlocked);
   controls.seedInput.disabled = !unlocked;
   controls.applySeedButton.disabled = !unlocked;
   controls.copySeedButton.disabled = !unlocked;
@@ -1199,7 +1200,7 @@ function createSvgWatermark(width, height) {
   const y = height - boxHeight - pad;
   const logoX = x + Math.round(pad * 0.45);
   const logoY = y + Math.round((boxHeight - logoSize) / 2);
-  return `<g opacity="0.86"><rect x="${x}" y="${y}" width="${boxWidth}" height="${boxHeight}" rx="${Math.max(8, Math.round(boxHeight * 0.22))}" fill="rgba(0,0,0,0.62)"/><image href="etto.svg" x="${logoX}" y="${logoY}" width="${logoSize}" height="${logoSize}"/><text x="${logoX + logoSize + gap}" y="${y + boxHeight / 2}" dominant-baseline="middle" font-family="Inter, Arial, sans-serif" font-size="${fontSize}" font-weight="700" fill="#fff">Made with Etto-Lab</text></g>`;
+  return `<g opacity="0.86"><rect x="${x}" y="${y}" width="${boxWidth}" height="${boxHeight}" rx="${Math.max(8, Math.round(boxHeight * 0.22))}" fill="rgba(0,0,0,0.62)"/><image href="etto.png" x="${logoX}" y="${logoY}" width="${logoSize}" height="${logoSize}"/><text x="${logoX + logoSize + gap}" y="${y + boxHeight / 2}" dominant-baseline="middle" font-family="Inter, Arial, sans-serif" font-size="${fontSize}" font-weight="700" fill="#fff">Made with Etto-Lab</text></g>`;
 }
 
 function getDrawableSource() {
