@@ -1599,22 +1599,37 @@ async function exportAnimation() {
     state.mode = "image";
     render();
 
-    const frames = [];
-    for (let frame = 0; frame < totalFrames; frame++) {
-      const progress = totalFrames <= 1 ? 1 : frame / (totalFrames - 1);
-      const phase = (originalPhase + progress * 720) % 361;
-      controls.phase.value = String(Math.round(phase));
-      render({ fullResolution: true });
-      frames.push(await canvasToJpegBytes(outputCanvas, 0.9));
-      const percent = Math.round(progress * 100);
-      controls.statusText.textContent = `Rendering still animation: ${percent}%.`;
-      await nextBrowserFrame();
+    let mp4Ready = false;
+    if (typeof VideoEncoder !== "undefined" && typeof VideoFrame !== "undefined") {
+      try {
+        controls.statusText.textContent = "Encoding fixed-FPS MP4 animation.";
+        const blob = await encodeStillAnimationMp4(duration, fps, totalFrames, originalPhase);
+        downloadBlob(blob, `${state.sourceName || "etto"}-animated-${duration}s.mp4`);
+        controls.statusText.textContent = `Still animation ready: ${duration}s MP4 at ${fps} fps.`;
+        mp4Ready = true;
+      } catch (error) {
+        controls.statusText.textContent = `MP4 encoder unavailable: ${error.message || error}. Falling back to AVI.`;
+      }
     }
 
-    controls.statusText.textContent = "Muxing deterministic AVI video.";
-    const blob = createMjpegAvi(frames, outputCanvas.width, outputCanvas.height, fps);
-    downloadBlob(blob, `${state.sourceName || "etto"}-animated-${duration}s.avi`);
-    controls.statusText.textContent = `Still animation ready: ${duration}s AVI at ${outputCanvas.width} x ${outputCanvas.height}.`;
+    if (!mp4Ready) {
+      const frames = [];
+      for (let frame = 0; frame < totalFrames; frame++) {
+        const progress = totalFrames <= 1 ? 1 : frame / (totalFrames - 1);
+        const phase = (originalPhase + progress * 720) % 361;
+        controls.phase.value = String(Math.round(phase));
+        render({ fullResolution: true });
+        frames.push(await canvasToJpegBytes(outputCanvas, 0.9));
+        const percent = Math.round(progress * 100);
+        controls.statusText.textContent = `Rendering still animation: ${percent}%.`;
+        await nextBrowserFrame();
+      }
+
+      controls.statusText.textContent = "Muxing AVI fallback.";
+      const blob = createMjpegAvi(frames, outputCanvas.width, outputCanvas.height, fps);
+      downloadBlob(blob, `${state.sourceName || "etto"}-animated-${duration}s.avi`);
+      controls.statusText.textContent = `Still animation ready: ${duration}s AVI fallback at ${outputCanvas.width} x ${outputCanvas.height}.`;
+    }
   } catch (error) {
     controls.statusText.textContent = `Still animation failed: ${error.message || error}`;
   } finally {
@@ -1628,6 +1643,92 @@ async function exportAnimation() {
   }
 }
 
+async function encodeStillAnimationMp4(duration, fps, totalFrames, originalPhase) {
+  render({ fullResolution: true });
+  const width = outputCanvas.width;
+  const height = outputCanvas.height;
+  const config = await supportedH264EncoderConfig(width, height, fps);
+  const chunks = [];
+  let decoderConfig = null;
+  let encodeError = null;
+
+  const encoder = new VideoEncoder({
+    output: (chunk, metadata) => {
+      if (metadata?.decoderConfig?.description) decoderConfig = metadata.decoderConfig;
+      const data = new Uint8Array(chunk.byteLength);
+      chunk.copyTo(data);
+      chunks.push({
+        data,
+        duration: Math.round(1000000 / fps),
+        key: chunk.type === "key",
+        timestamp: chunk.timestamp,
+      });
+    },
+    error: (error) => {
+      encodeError = error;
+    },
+  });
+
+  encoder.configure(config);
+  for (let frame = 0; frame < totalFrames; frame++) {
+    const progress = totalFrames <= 1 ? 1 : frame / (totalFrames - 1);
+    const phase = (originalPhase + progress * 720) % 361;
+    controls.phase.value = String(Math.round(phase));
+    render({ fullResolution: true });
+
+    const videoFrame = new VideoFrame(outputCanvas, {
+      timestamp: Math.round((frame * 1000000) / fps),
+      duration: Math.round(1000000 / fps),
+    });
+    encoder.encode(videoFrame, { keyFrame: frame === 0 || frame % fps === 0 });
+    videoFrame.close();
+
+    controls.statusText.textContent = `Encoding fixed-FPS MP4: ${Math.round(progress * 100)}%.`;
+    if (frame % 3 === 0) await nextBrowserFrame();
+  }
+
+  await encoder.flush();
+  encoder.close();
+
+  if (encodeError) throw encodeError;
+
+  if (!chunks.length || !decoderConfig?.description) {
+    throw new Error("H.264 encoder did not return MP4 decoder metadata.");
+  }
+
+  chunks.sort((a, b) => a.timestamp - b.timestamp);
+  const timescale = 90000;
+  const sampleDelta = Math.round(timescale / fps);
+  const mp4Bytes = createH264Mp4({
+    chunks,
+    width,
+    height,
+    timescale,
+    sampleDelta,
+    avcConfig: new Uint8Array(decoderConfig.description),
+  });
+  return new Blob([mp4Bytes], { type: "video/mp4" });
+}
+
+async function supportedH264EncoderConfig(width, height, fps) {
+  const base = {
+    width,
+    height,
+    framerate: fps,
+    bitrate: Math.round(Math.max(4000000, Math.min(20000000, width * height * fps * 0.16))),
+    avc: { format: "avc" },
+  };
+  const codecs = ["avc1.42E01E", "avc1.4D401E", "avc1.64001F"];
+
+  for (const codec of codecs) {
+    const config = { ...base, codec };
+    const support = await VideoEncoder.isConfigSupported(config).catch(() => null);
+    if (support?.supported) return support.config;
+  }
+
+  throw new Error("H.264 WebCodecs support was not found.");
+}
+
 async function finalizeRecordedVideo(chunks, mimeType, durationMs) {
   const blob = new Blob(chunks, { type: mimeType });
   if (!mimeType.includes("webm") || !Number.isFinite(durationMs) || durationMs <= 0) return blob;
@@ -1636,6 +1737,178 @@ async function finalizeRecordedVideo(chunks, mimeType, durationMs) {
   } catch {
     return blob;
   }
+}
+
+function createH264Mp4({ chunks, width, height, timescale, sampleDelta, avcConfig }) {
+  const sampleCount = chunks.length;
+  const duration = sampleCount * sampleDelta;
+  const ftyp = mp4Box("ftyp", asciiBytes("isom"), mp4U32(512), asciiBytes("isom"), asciiBytes("iso2"), asciiBytes("avc1"), asciiBytes("mp41"));
+  const mdatSize = chunks.reduce((total, chunk) => total + chunk.data.length, 8);
+  const mdatHeader = concatBytes([mp4U32(mdatSize), asciiBytes("mdat")]);
+  const sampleSizes = chunks.map((chunk) => chunk.data.length);
+  const syncSamples = chunks.map((chunk, index) => chunk.key ? index + 1 : null).filter(Boolean);
+  let moov = createMp4MovieBox({
+    width,
+    height,
+    timescale,
+    duration,
+    sampleDelta,
+    sampleCount,
+    sampleSizes,
+    firstSampleOffset: 0,
+    syncSamples,
+    avcConfig,
+  });
+  const firstSampleOffset = ftyp.length + moov.length + 8;
+  moov = createMp4MovieBox({
+    width,
+    height,
+    timescale,
+    duration,
+    sampleDelta,
+    sampleCount,
+    sampleSizes,
+    firstSampleOffset,
+    syncSamples,
+    avcConfig,
+  });
+
+  return concatBytes([ftyp, moov, mdatHeader, ...chunks.map((chunk) => chunk.data)]);
+}
+
+function createMp4MovieBox({ width, height, timescale, duration, sampleDelta, sampleCount, sampleSizes, firstSampleOffset, syncSamples, avcConfig }) {
+  const mvhd = mp4FullBox("mvhd", 0, 0, concatBytes([
+    mp4U32(0), mp4U32(0), mp4U32(timescale), mp4U32(duration),
+    mp4U32(0x00010000), mp4U16(0x0100), mp4U16(0), mp4U32(0), mp4U32(0),
+    mp4Matrix(), mp4U32(0), mp4U32(0), mp4U32(0), mp4U32(0), mp4U32(0), mp4U32(0), mp4U32(2),
+  ]));
+  const trak = createMp4VideoTrackBox({
+    width,
+    height,
+    timescale,
+    duration,
+    sampleDelta,
+    sampleCount,
+    sampleSizes,
+    firstSampleOffset,
+    syncSamples,
+    avcConfig,
+  });
+  return mp4Box("moov", mvhd, trak);
+}
+
+function createMp4VideoTrackBox({ width, height, timescale, duration, sampleDelta, sampleCount, sampleSizes, firstSampleOffset, syncSamples, avcConfig }) {
+  const tkhd = mp4FullBox("tkhd", 0, 0x000007, concatBytes([
+    mp4U32(0), mp4U32(0), mp4U32(1), mp4U32(0), mp4U32(duration),
+    mp4U32(0), mp4U32(0), mp4U16(0), mp4U16(0), mp4U16(0), mp4U16(0),
+    mp4Matrix(), mp4U32(width << 16), mp4U32(height << 16),
+  ]));
+  const mdia = createMp4MediaBox({
+    width,
+    height,
+    timescale,
+    duration,
+    sampleDelta,
+    sampleCount,
+    sampleSizes,
+    firstSampleOffset,
+    syncSamples,
+    avcConfig,
+  });
+  return mp4Box("trak", tkhd, mdia);
+}
+
+function createMp4MediaBox({ width, height, timescale, duration, sampleDelta, sampleCount, sampleSizes, firstSampleOffset, syncSamples, avcConfig }) {
+  const mdhd = mp4FullBox("mdhd", 0, 0, concatBytes([
+    mp4U32(0), mp4U32(0), mp4U32(timescale), mp4U32(duration), mp4U16(0x55c4), mp4U16(0),
+  ]));
+  const hdlr = mp4FullBox("hdlr", 0, 0, concatBytes([
+    mp4U32(0), asciiBytes("vide"), mp4U32(0), mp4U32(0), mp4U32(0), asciiBytes("VideoHandler\0"),
+  ]));
+  const minf = createMp4VideoMediaInfoBox({
+    width,
+    height,
+    sampleDelta,
+    sampleCount,
+    sampleSizes,
+    firstSampleOffset,
+    syncSamples,
+    avcConfig,
+  });
+  return mp4Box("mdia", mdhd, hdlr, minf);
+}
+
+function createMp4VideoMediaInfoBox({ width, height, sampleDelta, sampleCount, sampleSizes, firstSampleOffset, syncSamples, avcConfig }) {
+  const vmhd = mp4FullBox("vmhd", 0, 1, concatBytes([mp4U16(0), mp4U16(0), mp4U16(0), mp4U16(0)]));
+  const url = mp4FullBox("url ", 0, 1, new Uint8Array());
+  const dref = mp4FullBox("dref", 0, 0, concatBytes([mp4U32(1), url]));
+  const dinf = mp4Box("dinf", dref);
+  const stbl = createMp4SampleTableBox({
+    width,
+    height,
+    sampleDelta,
+    sampleCount,
+    sampleSizes,
+    firstSampleOffset,
+    syncSamples,
+    avcConfig,
+  });
+  return mp4Box("minf", vmhd, dinf, stbl);
+}
+
+function createMp4SampleTableBox({ width, height, sampleDelta, sampleCount, sampleSizes, firstSampleOffset, syncSamples, avcConfig }) {
+  const avc1 = createAvc1SampleEntry(width, height, avcConfig);
+  const stsd = mp4FullBox("stsd", 0, 0, concatBytes([mp4U32(1), avc1]));
+  const stts = mp4FullBox("stts", 0, 0, concatBytes([mp4U32(1), mp4U32(sampleCount), mp4U32(sampleDelta)]));
+  const stsc = mp4FullBox("stsc", 0, 0, concatBytes([mp4U32(1), mp4U32(1), mp4U32(sampleCount), mp4U32(1)]));
+  const stsz = mp4FullBox("stsz", 0, 0, concatBytes([mp4U32(0), mp4U32(sampleCount), ...sampleSizes.map(mp4U32)]));
+  const stco = mp4FullBox("stco", 0, 0, concatBytes([mp4U32(1), mp4U32(firstSampleOffset)]));
+  const boxes = [stsd, stts, stsc, stsz, stco];
+  if (syncSamples.length && syncSamples.length < sampleCount) {
+    boxes.push(mp4FullBox("stss", 0, 0, concatBytes([mp4U32(syncSamples.length), ...syncSamples.map(mp4U32)])));
+  }
+  return mp4Box("stbl", ...boxes);
+}
+
+function createAvc1SampleEntry(width, height, avcConfig) {
+  const compressorName = new Uint8Array(32);
+  const name = asciiBytes("Etto H.264");
+  compressorName[0] = name.length;
+  compressorName.set(name, 1);
+  return mp4Box("avc1", concatBytes([
+    new Uint8Array(6), mp4U16(1), mp4U16(0), mp4U16(0), mp4U32(0), mp4U32(0), mp4U32(0),
+    mp4U16(width), mp4U16(height), mp4U32(0x00480000), mp4U32(0x00480000), mp4U32(0), mp4U16(1),
+    compressorName, mp4U16(0x0018), mp4U16(0xffff), mp4Box("avcC", avcConfig),
+  ]));
+}
+
+function mp4Box(type, ...payloads) {
+  const size = 8 + payloads.reduce((total, payload) => total + payload.length, 0);
+  return concatBytes([mp4U32(size), asciiBytes(type), ...payloads]);
+}
+
+function mp4FullBox(type, version, flags, payload) {
+  return mp4Box(type, concatBytes([new Uint8Array([version, (flags >> 16) & 255, (flags >> 8) & 255, flags & 255]), payload]));
+}
+
+function mp4Matrix() {
+  return concatBytes([
+    mp4U32(0x00010000), mp4U32(0), mp4U32(0),
+    mp4U32(0), mp4U32(0x00010000), mp4U32(0),
+    mp4U32(0), mp4U32(0), mp4U32(0x40000000),
+  ]);
+}
+
+function mp4U16(value) {
+  const bytes = new Uint8Array(2);
+  new DataView(bytes.buffer).setUint16(0, value, false);
+  return bytes;
+}
+
+function mp4U32(value) {
+  const bytes = new Uint8Array(4);
+  new DataView(bytes.buffer).setUint32(0, value >>> 0, false);
+  return bytes;
 }
 
 function createMjpegAvi(frames, width, height, fps) {
@@ -1936,13 +2209,23 @@ function readUnsignedEbmlValue(bytes, start, end) {
 
 function preferredVideoMimeType() {
   const candidates = [
+    ...mp4MimeCandidates(),
     "video/webm;codecs=vp9",
     "video/webm;codecs=vp8",
     "video/webm",
+  ];
+  return candidates.find((type) => MediaRecorder.isTypeSupported(type)) || "";
+}
+
+function mp4MimeCandidates() {
+  return [
+    "video/mp4;codecs=avc1.42E01E",
+    "video/mp4;codecs=avc1.4D401E",
+    "video/mp4;codecs=avc1.64001F",
+    "video/mp4;codecs=avc1",
     "video/mp4;codecs=h264",
     "video/mp4",
   ];
-  return candidates.find((type) => MediaRecorder.isTypeSupported(type)) || "";
 }
 
 function createVideoRecorder(stream, mimeType) {
