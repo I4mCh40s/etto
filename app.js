@@ -2,6 +2,7 @@ const sourceCanvas = document.querySelector("#sourceCanvas");
 const outputCanvas = document.querySelector("#outputCanvas");
 const soloCanvas = document.querySelector("#soloCanvas");
 const sourceVideo = document.querySelector("#sourceVideo");
+const watermarkImage = new Image();
 const sourceCtx = sourceCanvas.getContext("2d", { willReadFrequently: true });
 const outputCtx = outputCanvas.getContext("2d", { willReadFrequently: true });
 const soloCtx = soloCanvas.getContext("2d", { willReadFrequently: true });
@@ -37,6 +38,11 @@ const controls = {
   randomizeButton: document.querySelector("#randomizeButton"),
   applySeedButton: document.querySelector("#applySeedButton"),
   copySeedButton: document.querySelector("#copySeedButton"),
+  unlockPanel: document.querySelector("#unlockPanel"),
+  supporterPassword: document.querySelector("#supporterPassword"),
+  unlockButton: document.querySelector("#unlockButton"),
+  unlockStatus: document.querySelector("#unlockStatus"),
+  seedTools: document.querySelector("#seedTools"),
   seedHistory: document.querySelector("#seedHistory"),
   seedHistoryEmpty: document.querySelector("#seedHistoryEmpty"),
   clearSeedHistory: document.querySelector("#clearSeedHistory"),
@@ -182,9 +188,14 @@ let state = {
   isApplyingRecipe: false,
   seedHistory: [],
   pendingSeedHistoryLabel: "",
+  supporterUnlocked: false,
+  currentRecipeSeed: "",
+  watermarkReady: false,
 };
 
 const recipePrefix = "ETTO1-";
+const unlockEndpoint = "https://etto-unlock.etto-lab.workers.dev";
+const unlockTokenStorageKey = "etto.unlockToken";
 const seedHistoryLimit = 8;
 const seedHistoryStorageKey = "etto.seedHistory";
 const panelStorageKey = "etto.collapsedPanels";
@@ -195,12 +206,22 @@ function init() {
   bindEvents();
   initCollapsiblePanels();
   loadSeedHistory();
+  loadWatermark();
   drawSample();
   renderEffectStack();
   renderSeedHistory();
   updatePalettePreview();
   syncSeedToSettings();
+  updateSeedGate();
+  verifyStoredUnlock();
   scheduleRender();
+}
+
+function loadWatermark() {
+  watermarkImage.onload = () => {
+    state.watermarkReady = true;
+  };
+  watermarkImage.src = "etto.svg";
 }
 
 function populateSelects() {
@@ -288,11 +309,17 @@ function bindEvents() {
   controls.applyPreset.addEventListener("click", applyPreset);
   controls.selectedEffectAmount.addEventListener("input", updateSelectedEffectAmount);
   controls.randomizeButton.addEventListener("click", randomizeSeed);
-  controls.applySeedButton.addEventListener("click", () => applySeedRecipe(controls.seedInput.value));
+  controls.applySeedButton.addEventListener("click", () => {
+    if (requireSeedUnlock("Unlock to paste and apply recipe seeds.")) applySeedRecipe(controls.seedInput.value);
+  });
   controls.copySeedButton.addEventListener("click", copySeed);
   controls.clearSeedHistory.addEventListener("click", clearSeedHistory);
+  controls.unlockButton.addEventListener("click", unlockSeedTools);
   controls.seedInput.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") applySeedRecipe(controls.seedInput.value);
+    if (event.key === "Enter" && requireSeedUnlock("Unlock to paste and apply recipe seeds.")) applySeedRecipe(controls.seedInput.value);
+  });
+  controls.supporterPassword.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") unlockSeedTools();
   });
   controls.imageModeButton.addEventListener("click", () => setMode("image"));
   controls.videoModeButton.addEventListener("click", () => setMode("video"));
@@ -643,8 +670,9 @@ function applySeedRecipe(seedValue) {
 }
 
 async function copySeed() {
+  if (!requireSeedUnlock("Unlock to copy recipe seeds.")) return;
   syncSeedToSettings();
-  const seed = controls.seedInput.value;
+  const seed = state.currentRecipeSeed;
   try {
     await navigator.clipboard.writeText(seed);
     controls.statusText.textContent = "Copied recipe seed.";
@@ -652,6 +680,89 @@ async function copySeed() {
     controls.statusText.textContent = "Recipe seed is ready to copy.";
   }
   addSeedHistoryFromCanvas("Copied");
+}
+
+async function unlockSeedTools() {
+  const password = controls.supporterPassword.value;
+  if (!password) {
+    controls.unlockStatus.textContent = "Enter the supporter password to unlock seed tools.";
+    return;
+  }
+
+  controls.unlockButton.disabled = true;
+  controls.unlockButton.textContent = "Checking...";
+  controls.unlockStatus.textContent = "Checking password.";
+
+  try {
+    const response = await fetch(`${unlockEndpoint}/unlock`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password }),
+    });
+    const result = await response.json();
+    if (!response.ok || !result.ok || !result.token) {
+      throw new Error(result.error || "Invalid password");
+    }
+
+    localStorage.setItem(unlockTokenStorageKey, result.token);
+    state.supporterUnlocked = true;
+    controls.supporterPassword.value = "";
+    updateSeedGate("Seed tools unlocked.");
+  } catch (error) {
+    state.supporterUnlocked = false;
+    updateSeedGate(error.message || "Could not unlock seed tools.");
+  } finally {
+    controls.unlockButton.disabled = state.supporterUnlocked;
+    controls.unlockButton.textContent = state.supporterUnlocked ? "Unlocked" : "Unlock Seed Tools";
+  }
+}
+
+async function verifyStoredUnlock() {
+  const token = localStorage.getItem(unlockTokenStorageKey);
+  if (!token) return;
+
+  try {
+    const response = await fetch(`${unlockEndpoint}/verify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token }),
+    });
+    const result = await response.json();
+    state.supporterUnlocked = Boolean(response.ok && result.ok && result.unlocked);
+    if (!state.supporterUnlocked) localStorage.removeItem(unlockTokenStorageKey);
+    updateSeedGate(state.supporterUnlocked ? "Seed tools unlocked." : "Unlock expired. Enter the password again.");
+  } catch {
+    updateSeedGate("Could not verify unlock. Seed tools are locked for now.");
+  }
+}
+
+function requireSeedUnlock(message) {
+  if (state.supporterUnlocked) return true;
+  controls.unlockStatus.textContent = message;
+  controls.supporterPassword.focus();
+  return false;
+}
+
+function updateSeedGate(message) {
+  const unlocked = state.supporterUnlocked;
+  controls.seedTools.classList.toggle("locked-tools", !unlocked);
+  controls.unlockPanel.classList.toggle("unlocked-panel", unlocked);
+  controls.seedInput.disabled = !unlocked;
+  controls.applySeedButton.disabled = !unlocked;
+  controls.copySeedButton.disabled = !unlocked;
+  controls.clearSeedHistory.disabled = !unlocked;
+  controls.supporterPassword.disabled = unlocked;
+  controls.unlockButton.disabled = unlocked;
+  controls.unlockButton.textContent = unlocked ? "Unlocked" : "Unlock Seed Tools";
+  controls.unlockStatus.textContent = message || (unlocked ? "Seed tools unlocked." : "Randomize is free. Unlock recipe seeds and history.");
+  updateSeedInputDisplay();
+  renderSeedHistory();
+}
+
+function updateSeedInputDisplay() {
+  controls.seedInput.value = state.supporterUnlocked
+    ? state.currentRecipeSeed
+    : "Unlock to view and paste recipe seeds";
 }
 
 function loadSeedHistory() {
@@ -662,6 +773,7 @@ function loadSeedHistory() {
 }
 
 function clearSeedHistory() {
+  if (!requireSeedUnlock("Unlock to manage seed history.")) return;
   state.seedHistory = [];
   writeJson(seedHistoryStorageKey, state.seedHistory);
   renderSeedHistory();
@@ -669,13 +781,19 @@ function clearSeedHistory() {
 }
 
 function capturePendingSeedHistory() {
-  if (!state.pendingSeedHistoryLabel || !outputCanvas.width || state.isExportingAnimation || state.isExportingVideo) return;
+  if (!state.pendingSeedHistoryLabel) return;
+  if (!state.supporterUnlocked) {
+    state.pendingSeedHistoryLabel = "";
+    return;
+  }
+  if (!outputCanvas.width || state.isExportingAnimation || state.isExportingVideo) return;
   addSeedHistoryFromCanvas(state.pendingSeedHistoryLabel);
   state.pendingSeedHistoryLabel = "";
 }
 
 function addSeedHistoryFromCanvas(label) {
-  const seed = controls.seedInput.value;
+  if (!state.supporterUnlocked) return;
+  const seed = state.currentRecipeSeed;
   if (!seed || !outputCanvas.width) return;
 
   const entry = {
@@ -711,6 +829,13 @@ function createSeedPreview() {
 
 function renderSeedHistory() {
   controls.seedHistory.innerHTML = "";
+  if (!state.supporterUnlocked) {
+    controls.seedHistoryEmpty.textContent = "Unlock to save previews and restore exact seeds.";
+    controls.seedHistoryEmpty.classList.remove("hidden");
+    return;
+  }
+
+  controls.seedHistoryEmpty.textContent = "Randomize or copy a seed to save a preview.";
   controls.seedHistoryEmpty.classList.toggle("hidden", state.seedHistory.length > 0);
 
   state.seedHistory.forEach((entry, index) => {
@@ -718,6 +843,7 @@ function renderSeedHistory() {
     item.className = "seed-history-item";
     item.title = "Apply this seed";
     item.addEventListener("click", () => {
+      if (!requireSeedUnlock("Unlock to restore seed history.")) return;
       controls.seedInput.value = entry.seed;
       state.pendingSeedHistoryLabel = "";
       applySeedRecipe(entry.seed);
@@ -741,6 +867,7 @@ function renderSeedHistory() {
     copy.textContent = "Copy";
     copy.addEventListener("click", async (event) => {
       event.stopPropagation();
+      if (!requireSeedUnlock("Unlock to copy history seeds.")) return;
       controls.seedInput.value = entry.seed;
       try {
         await navigator.clipboard.writeText(entry.seed);
@@ -762,7 +889,8 @@ function seedSummary(seed) {
 
 function syncSeedToSettings() {
   if (state.isApplyingRecipe) return;
-  controls.seedInput.value = encodeRecipeSeed(readSettingsRecipe());
+  state.currentRecipeSeed = encodeRecipeSeed(readSettingsRecipe());
+  updateSeedInputDisplay();
 }
 
 function readSettingsRecipe() {
@@ -953,7 +1081,12 @@ function seekVideo() {
 function videoLoop() {
   if (sourceVideo.paused || sourceVideo.ended) return;
   controls.phase.value = String((Number(controls.phase.value) + 2) % 361);
-  scheduleRender();
+  if (state.isExportingVideo) {
+    render({ fullResolution: true });
+    applyWatermarkIfLocked();
+  } else {
+    scheduleRender();
+  }
   requestAnimationFrame(videoLoop);
 }
 
@@ -995,6 +1128,78 @@ function render(options = {}) {
   controls.renderMeta.textContent = `${elapsed} ms`;
   controls.exportMeta.textContent = `${width} x ${height}`;
   capturePendingSeedHistory();
+}
+
+function applyWatermarkIfLocked() {
+  if (state.supporterUnlocked || !outputCanvas.width || !outputCanvas.height) return;
+  drawEttoWatermark(outputCtx, outputCanvas.width, outputCanvas.height);
+}
+
+function drawEttoWatermark(ctx, width, height) {
+  const pad = Math.max(14, Math.round(Math.min(width, height) * 0.025));
+  const logoSize = Math.max(22, Math.round(Math.min(width, height) * 0.055));
+  const fontSize = Math.max(12, Math.round(logoSize * 0.38));
+  const text = "Made with Etto-Lab";
+
+  ctx.save();
+  ctx.font = `700 ${fontSize}px Inter, Arial, sans-serif`;
+  const textWidth = ctx.measureText(text).width;
+  const gap = Math.max(8, Math.round(logoSize * 0.22));
+  const boxWidth = Math.ceil(logoSize + gap + textWidth + pad * 1.2);
+  const boxHeight = Math.ceil(Math.max(logoSize, fontSize * 1.35) + pad * 0.9);
+  const x = width - boxWidth - pad;
+  const y = height - boxHeight - pad;
+
+  ctx.globalAlpha = 0.82;
+  ctx.fillStyle = "rgba(0, 0, 0, 0.62)";
+  roundRect(ctx, x, y, boxWidth, boxHeight, Math.max(8, Math.round(boxHeight * 0.22)));
+  ctx.fill();
+
+  const logoX = x + Math.round(pad * 0.45);
+  const logoY = y + Math.round((boxHeight - logoSize) / 2);
+  if (state.watermarkReady) {
+    ctx.drawImage(watermarkImage, logoX, logoY, logoSize, logoSize);
+  } else {
+    ctx.fillStyle = "#ffffff";
+    ctx.beginPath();
+    ctx.arc(logoX + logoSize / 2, logoY + logoSize / 2, logoSize / 2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = "#ffffff";
+  ctx.shadowColor = "rgba(0, 0, 0, 0.45)";
+  ctx.shadowBlur = 3;
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, logoX + logoSize + gap, y + boxHeight / 2);
+  ctx.restore();
+}
+
+function roundRect(ctx, x, y, width, height, radius) {
+  const r = Math.min(radius, width / 2, height / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + width, y, x + width, y + height, r);
+  ctx.arcTo(x + width, y + height, x, y + height, r);
+  ctx.arcTo(x, y + height, x, y, r);
+  ctx.arcTo(x, y, x + width, y, r);
+  ctx.closePath();
+}
+
+function createSvgWatermark(width, height) {
+  const pad = Math.max(14, Math.round(Math.min(width, height) * 0.025));
+  const logoSize = Math.max(22, Math.round(Math.min(width, height) * 0.055));
+  const fontSize = Math.max(12, Math.round(logoSize * 0.38));
+  const text = "Made with Etto-Lab";
+  const estimatedTextWidth = text.length * fontSize * 0.56;
+  const gap = Math.max(8, Math.round(logoSize * 0.22));
+  const boxWidth = Math.ceil(logoSize + gap + estimatedTextWidth + pad * 1.2);
+  const boxHeight = Math.ceil(Math.max(logoSize, fontSize * 1.35) + pad * 0.9);
+  const x = width - boxWidth - pad;
+  const y = height - boxHeight - pad;
+  const logoX = x + Math.round(pad * 0.45);
+  const logoY = y + Math.round((boxHeight - logoSize) / 2);
+  return `<g opacity="0.86"><rect x="${x}" y="${y}" width="${boxWidth}" height="${boxHeight}" rx="${Math.max(8, Math.round(boxHeight * 0.22))}" fill="rgba(0,0,0,0.62)"/><image href="etto.svg" x="${logoX}" y="${logoY}" width="${logoSize}" height="${logoSize}"/><text x="${logoX + logoSize + gap}" y="${y + boxHeight / 2}" dominant-baseline="middle" font-family="Inter, Arial, sans-serif" font-size="${fontSize}" font-weight="700" fill="#fff">Made with Etto-Lab</text></g>`;
 }
 
 function getDrawableSource() {
@@ -1646,6 +1851,7 @@ function effectName(type) {
 
 async function exportRaster(type) {
   render({ fullResolution: true });
+  applyWatermarkIfLocked();
   const blob = await canvasToBlob(outputCanvas, type, controls.lossless.checked ? 1 : 0.86);
   if (blob) {
     downloadBlob(blob, `${state.sourceName || "etto"}-${Date.now()}.${type === "image/png" ? "png" : "jpg"}`);
@@ -1665,7 +1871,8 @@ function exportSvg() {
       if (lum < 130) rects.push(`<rect x="${x}" y="${y}" width="${step}" height="${step}"/>`);
     }
   }
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${outputCanvas.width} ${outputCanvas.height}" width="${outputCanvas.width}" height="${outputCanvas.height}"><g fill="#000">${rects.join("")}</g></svg>`;
+  const watermark = state.supporterUnlocked ? "" : createSvgWatermark(outputCanvas.width, outputCanvas.height);
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${outputCanvas.width} ${outputCanvas.height}" width="${outputCanvas.width}" height="${outputCanvas.height}"><g fill="#000">${rects.join("")}</g>${watermark}</svg>`;
   downloadBlob(new Blob([svg], { type: "image/svg+xml" }), `${state.sourceName || "etto"}-black-vector.svg`);
   scheduleRender();
 }
@@ -1685,6 +1892,7 @@ async function batchExport() {
           state.sourceImage = image;
           state.sourceName = file.name.replace(/\.[^.]+$/, "");
           render({ fullResolution: true });
+          applyWatermarkIfLocked();
           outputCanvas.toBlob((blob) => {
             if (blob) downloadBlob(blob, `${state.sourceName}-dither.png`);
             setTimeout(resolve, 120);
@@ -1720,6 +1928,7 @@ async function exportVideo() {
     sourceVideo.pause();
     await seekSourceVideo(0);
     render();
+    applyWatermarkIfLocked();
 
     const mimeType = preferredVideoMimeType();
     const stream = outputCanvas.captureStream(30);
@@ -1810,6 +2019,7 @@ async function exportAnimation() {
         const phase = (originalPhase + progress * 720) % 361;
         controls.phase.value = String(Math.round(phase));
         render({ fullResolution: true });
+        applyWatermarkIfLocked();
         frames.push(await canvasToJpegBytes(outputCanvas, 0.9));
         const percent = Math.round(progress * 100);
         controls.statusText.textContent = `Rendering still animation: ${percent}%.`;
@@ -1866,6 +2076,7 @@ async function encodeStillAnimationMp4(duration, fps, totalFrames, originalPhase
     const phase = (originalPhase + progress * 720) % 361;
     controls.phase.value = String(Math.round(phase));
     render({ fullResolution: true });
+    applyWatermarkIfLocked();
 
     const videoFrame = new VideoFrame(outputCanvas, {
       timestamp: Math.round((frame * 1000000) / fps),

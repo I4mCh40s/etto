@@ -120,22 +120,34 @@
             <h2>Seed Lab</h2>
             <span>deterministic looks</span>
           </div>
-          <label class="control">
-            <span>Seed</span>
-            <input id="seedInput" type="text" value="ETTO-0001" maxlength="4096" spellcheck="false" />
-          </label>
           <div class="seed-actions">
             <button id="randomizeButton" class="full-button" type="button">Randomize</button>
+          </div>
+          <div id="unlockPanel" class="unlock-panel">
+            <label class="control">
+              <span>Password</span>
+              <input id="supporterPassword" type="password" autocomplete="current-password" placeholder="Supporter password" />
+            </label>
+            <button id="unlockButton" class="full-button" type="button">Unlock Seed Tools</button>
+            <p id="unlockStatus" class="empty-note">Randomize is free. Unlock recipe seeds and history.</p>
+          </div>
+          <div id="seedTools" class="seed-tools">
+            <label class="control">
+              <span>Seed</span>
+              <input id="seedInput" type="text" value="ETTO-0001" maxlength="4096" spellcheck="false" />
+            </label>
+            <div class="seed-actions">
             <button id="applySeedButton" class="danger-button" type="button">Apply Seed</button>
             <button id="copySeedButton" class="danger-button" type="button">Copy Seed</button>
-          </div>
-          <div class="seed-history-block">
-            <div class="mini-heading">
-              <span>History</span>
-              <button id="clearSeedHistory" class="mini-button" type="button">Clear</button>
             </div>
-            <div id="seedHistory" class="seed-history" aria-live="polite"></div>
-            <p id="seedHistoryEmpty" class="empty-note">Randomize or copy a seed to save a preview.</p>
+            <div class="seed-history-block">
+              <div class="mini-heading">
+                <span>History</span>
+                <button id="clearSeedHistory" class="mini-button" type="button">Clear</button>
+              </div>
+              <div id="seedHistory" class="seed-history" aria-live="polite"></div>
+              <p id="seedHistoryEmpty" class="empty-note">Randomize or copy a seed to save a preview.</p>
+            </div>
           </div>
         </section>
 

@@ -1,0 +1,16 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "etto-unlock",
+  "main": "src/index.js",
+  "compatibility_date": "2026-05-15",
+  "secrets": {
+    "required": [
+      "ETTO_SUPPORTER_PASSWORD",
+      "ETTO_TOKEN_SECRET"
+    ]
+  },
+  "vars": {
+    "ETTO_ALLOWED_ORIGIN": "*",
+    "ETTO_TOKEN_TTL_SECONDS": "2592000"
+  }
+}
