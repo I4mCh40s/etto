@@ -191,6 +191,7 @@ let state = {
   supporterUnlocked: false,
   currentRecipeSeed: "",
   watermarkReady: false,
+  videoExportSize: null,
 };
 
 const recipePrefix = "ETTO1-";
@@ -199,6 +200,8 @@ const unlockTokenStorageKey = "etto.unlockToken";
 const seedHistoryLimit = 8;
 const seedHistoryStorageKey = "etto.seedHistory";
 const panelStorageKey = "etto.collapsedPanels";
+const videoExportMaxLandscape = { width: 1280, height: 720 };
+const videoExportMaxPortrait = { width: 720, height: 1280 };
 const defaultCollapsedPanels = new Set(["preset", "algorithm", "color"]);
 
 function init() {
@@ -1107,9 +1110,10 @@ function render(options = {}) {
   const scale = fullResolution ? 1 : Number(controls.resolution.value);
   const naturalWidth = source.videoWidth || source.naturalWidth || source.width;
   const naturalHeight = source.videoHeight || source.naturalHeight || source.height;
+  const videoExportSize = (state.isExportingVideo || state.isExportingAnimation) ? state.videoExportSize : null;
   const fit = fullResolution ? 1 : Math.min(1, maxSide / Math.max(naturalWidth, naturalHeight));
-  const width = Math.max(16, Math.round(naturalWidth * fit * scale));
-  const height = Math.max(16, Math.round(naturalHeight * fit * scale));
+  const width = videoExportSize?.width || Math.max(16, Math.round(naturalWidth * fit * scale));
+  const height = videoExportSize?.height || Math.max(16, Math.round(naturalHeight * fit * scale));
 
   sourceCanvas.width = width;
   sourceCanvas.height = height;
@@ -1129,6 +1133,26 @@ function render(options = {}) {
   controls.renderMeta.textContent = `${elapsed} ms`;
   controls.exportMeta.textContent = `${width} x ${height}`;
   capturePendingSeedHistory();
+}
+
+function getVideoExportSize(naturalWidth, naturalHeight) {
+  const width = Math.max(16, Number(naturalWidth) || 16);
+  const height = Math.max(16, Number(naturalHeight) || 16);
+  const limit = height > width ? videoExportMaxPortrait : videoExportMaxLandscape;
+  const scale = Math.min(1, limit.width / width, limit.height / height);
+  return {
+    width: evenVideoDimension(width * scale),
+    height: evenVideoDimension(height * scale),
+  };
+}
+
+function evenVideoDimension(value) {
+  const dimension = Math.max(16, Math.floor(value));
+  return dimension % 2 === 0 ? dimension : dimension - 1;
+}
+
+function describeVideoExportSize(size) {
+  return `${size.width} x ${size.height}`;
 }
 
 function applyWatermarkIfLocked() {
@@ -1926,6 +1950,7 @@ async function exportVideo() {
     controls.statusText.textContent = "Preparing video export.";
 
     await ensureVideoReady();
+    state.videoExportSize = getVideoExportSize(sourceVideo.videoWidth, sourceVideo.videoHeight);
     sourceVideo.pause();
     await seekSourceVideo(0);
     render();
@@ -1957,7 +1982,7 @@ async function exportVideo() {
     recorder.start(250);
     await sourceVideo.play();
     controls.playButton.textContent = "||";
-    controls.statusText.textContent = "Recording processed video in real time.";
+    controls.statusText.textContent = `Recording processed video at ${describeVideoExportSize(state.videoExportSize)}.`;
     monitorVideoExport(startedAt);
     await stopped;
     stream.getTracks().forEach((track) => track.stop());
@@ -1972,9 +1997,11 @@ async function exportVideo() {
     controls.statusText.textContent = `Video export failed: ${error.message || error}`;
   } finally {
     state.isExportingVideo = false;
+    state.videoExportSize = null;
     controls.exportVideo.disabled = false;
     controls.exportVideo.textContent = "Video";
     sourceVideo.pause();
+    scheduleRender();
   }
 }
 
@@ -1998,15 +2025,16 @@ async function exportAnimation() {
     controls.exportAnimation.textContent = "Animating...";
     controls.statusText.textContent = `Rendering ${duration}s animation from still image.`;
     state.mode = "image";
+    state.videoExportSize = getVideoExportSize(state.sourceImage.naturalWidth, state.sourceImage.naturalHeight);
     render();
 
     let mp4Ready = false;
     if (typeof VideoEncoder !== "undefined" && typeof VideoFrame !== "undefined") {
       try {
-        controls.statusText.textContent = "Encoding fixed-FPS MP4 animation.";
+        controls.statusText.textContent = `Encoding fixed-FPS MP4 animation at ${describeVideoExportSize(state.videoExportSize)}.`;
         const blob = await encodeStillAnimationMp4(duration, fps, totalFrames, originalPhase);
         downloadBlob(blob, `${state.sourceName || "etto"}-animated-${duration}s.mp4`);
-        controls.statusText.textContent = `Still animation ready: ${duration}s MP4 at ${fps} fps.`;
+        controls.statusText.textContent = `Still animation ready: ${duration}s MP4 at ${fps} fps, ${describeVideoExportSize(state.videoExportSize)}.`;
         mp4Ready = true;
       } catch (error) {
         controls.statusText.textContent = `MP4 encoder unavailable: ${error.message || error}. Falling back to AVI.`;
@@ -2036,6 +2064,7 @@ async function exportAnimation() {
     controls.statusText.textContent = `Still animation failed: ${error.message || error}`;
   } finally {
     state.isExportingAnimation = false;
+    state.videoExportSize = null;
     controls.exportAnimation.disabled = false;
     controls.exportAnimation.textContent = "Animate Still";
     controls.phase.value = String(originalPhase);
@@ -2678,7 +2707,8 @@ function monitorVideoExport(startedAt) {
     ? Math.round((sourceVideo.currentTime / sourceVideo.duration) * 100)
     : 0;
   const elapsed = Math.round((performance.now() - startedAt) / 1000);
-  controls.statusText.textContent = `Recording video: ${percent}% (${elapsed}s).`;
+  const size = state.videoExportSize ? ` at ${describeVideoExportSize(state.videoExportSize)}` : "";
+  controls.statusText.textContent = `Recording video${size}: ${percent}% (${elapsed}s).`;
   requestAnimationFrame(() => monitorVideoExport(startedAt));
 }
 
