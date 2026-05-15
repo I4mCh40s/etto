@@ -37,6 +37,9 @@ const controls = {
   randomizeButton: document.querySelector("#randomizeButton"),
   applySeedButton: document.querySelector("#applySeedButton"),
   copySeedButton: document.querySelector("#copySeedButton"),
+  seedHistory: document.querySelector("#seedHistory"),
+  seedHistoryEmpty: document.querySelector("#seedHistoryEmpty"),
+  clearSeedHistory: document.querySelector("#clearSeedHistory"),
   blur: document.querySelector("#blur"),
   extractPalette: document.querySelector("#extractPalette"),
   exportPng: document.querySelector("#exportPng"),
@@ -177,15 +180,24 @@ let state = {
   isExportingAnimation: false,
   invertColors: false,
   isApplyingRecipe: false,
+  seedHistory: [],
+  pendingSeedHistoryLabel: "",
 };
 
 const recipePrefix = "ETTO1-";
+const seedHistoryLimit = 8;
+const seedHistoryStorageKey = "etto.seedHistory";
+const panelStorageKey = "etto.collapsedPanels";
+const defaultCollapsedPanels = new Set(["preset", "algorithm", "color"]);
 
 function init() {
   populateSelects();
   bindEvents();
+  initCollapsiblePanels();
+  loadSeedHistory();
   drawSample();
   renderEffectStack();
+  renderSeedHistory();
   updatePalettePreview();
   syncSeedToSettings();
   scheduleRender();
@@ -218,6 +230,56 @@ function populateSelects() {
   });
 }
 
+function initCollapsiblePanels() {
+  const saved = readJson(panelStorageKey, {});
+  document.querySelectorAll(".sidebar > .panel").forEach((panel) => {
+    const heading = panel.querySelector(":scope > .panel-heading");
+    const title = heading?.querySelector("h2")?.textContent?.trim() || "Panel";
+    if (!heading) return;
+
+    const key = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "collapse-toggle";
+    button.title = `Collapse ${title}`;
+    button.setAttribute("aria-label", `Collapse ${title}`);
+    heading.append(button);
+    panel.classList.add("collapsible-panel");
+    panel.dataset.panelKey = key;
+
+    const savedValue = saved[key];
+    const collapsed = typeof savedValue === "boolean" ? savedValue : defaultCollapsedPanels.has(key);
+    setPanelCollapsed(panel, collapsed, false);
+
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      setPanelCollapsed(panel, !panel.classList.contains("collapsed-panel"));
+    });
+
+    heading.addEventListener("click", (event) => {
+      if (event.target.closest("button, input, select, label, a")) return;
+      setPanelCollapsed(panel, !panel.classList.contains("collapsed-panel"));
+    });
+  });
+}
+
+function setPanelCollapsed(panel, collapsed, persist = true) {
+  const button = panel.querySelector(":scope > .panel-heading .collapse-toggle");
+  const title = panel.querySelector(":scope > .panel-heading h2")?.textContent?.trim() || "Panel";
+  panel.classList.toggle("collapsed-panel", collapsed);
+  if (button) {
+    button.textContent = collapsed ? "+" : "-";
+    button.title = `${collapsed ? "Expand" : "Collapse"} ${title}`;
+    button.setAttribute("aria-label", `${collapsed ? "Expand" : "Collapse"} ${title}`);
+    button.setAttribute("aria-expanded", String(!collapsed));
+  }
+  if (!persist) return;
+
+  const saved = readJson(panelStorageKey, {});
+  saved[panel.dataset.panelKey] = collapsed;
+  writeJson(panelStorageKey, saved);
+}
+
 function bindEvents() {
   controls.imageInput.addEventListener("change", handleImages);
   controls.videoInput.addEventListener("change", handleVideo);
@@ -228,6 +290,7 @@ function bindEvents() {
   controls.randomizeButton.addEventListener("click", randomizeSeed);
   controls.applySeedButton.addEventListener("click", () => applySeedRecipe(controls.seedInput.value));
   controls.copySeedButton.addEventListener("click", copySeed);
+  controls.clearSeedHistory.addEventListener("click", clearSeedHistory);
   controls.seedInput.addEventListener("keydown", (event) => {
     if (event.key === "Enter") applySeedRecipe(controls.seedInput.value);
   });
@@ -515,6 +578,7 @@ function applyPreset() {
 
 function randomizeSeed() {
   const seed = createReadableSeed();
+  state.pendingSeedHistoryLabel = "Randomized";
   applySeedRecipe(seed);
 }
 
@@ -531,6 +595,7 @@ function applySeedRecipe(seedValue) {
     renderEffectStack();
     syncSeedToSettings();
     controls.statusText.textContent = "Applied recipe seed.";
+    state.pendingSeedHistoryLabel ||= "Applied";
     scheduleRender();
     return;
   }
@@ -573,6 +638,7 @@ function applySeedRecipe(seedValue) {
   renderEffectStack();
   syncSeedToSettings();
   controls.statusText.textContent = `Randomized from ${seed}.`;
+  state.pendingSeedHistoryLabel ||= "Randomized";
   scheduleRender();
 }
 
@@ -585,6 +651,113 @@ async function copySeed() {
   } catch {
     controls.statusText.textContent = "Recipe seed is ready to copy.";
   }
+  addSeedHistoryFromCanvas("Copied");
+}
+
+function loadSeedHistory() {
+  const saved = readJson(seedHistoryStorageKey, []);
+  state.seedHistory = Array.isArray(saved)
+    ? saved.filter((entry) => entry?.seed && entry?.preview).slice(0, seedHistoryLimit)
+    : [];
+}
+
+function clearSeedHistory() {
+  state.seedHistory = [];
+  writeJson(seedHistoryStorageKey, state.seedHistory);
+  renderSeedHistory();
+  controls.statusText.textContent = "Seed history cleared.";
+}
+
+function capturePendingSeedHistory() {
+  if (!state.pendingSeedHistoryLabel || !outputCanvas.width || state.isExportingAnimation || state.isExportingVideo) return;
+  addSeedHistoryFromCanvas(state.pendingSeedHistoryLabel);
+  state.pendingSeedHistoryLabel = "";
+}
+
+function addSeedHistoryFromCanvas(label) {
+  const seed = controls.seedInput.value;
+  if (!seed || !outputCanvas.width) return;
+
+  const entry = {
+    id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    seed,
+    label,
+    source: state.sourceName || "sample",
+    preview: createSeedPreview(),
+    createdAt: Date.now(),
+  };
+
+  state.seedHistory = [entry, ...state.seedHistory.filter((item) => item.seed !== seed)].slice(0, seedHistoryLimit);
+  writeJson(seedHistoryStorageKey, state.seedHistory);
+  renderSeedHistory();
+}
+
+function createSeedPreview() {
+  const preview = document.createElement("canvas");
+  const maxWidth = 120;
+  const maxHeight = 78;
+  const scale = Math.min(maxWidth / outputCanvas.width, maxHeight / outputCanvas.height);
+  const width = Math.max(1, Math.round(outputCanvas.width * scale));
+  const height = Math.max(1, Math.round(outputCanvas.height * scale));
+  preview.width = maxWidth;
+  preview.height = maxHeight;
+  const ctx = preview.getContext("2d");
+  ctx.fillStyle = "#050505";
+  ctx.fillRect(0, 0, preview.width, preview.height);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(outputCanvas, Math.round((maxWidth - width) / 2), Math.round((maxHeight - height) / 2), width, height);
+  return preview.toDataURL("image/jpeg", 0.72);
+}
+
+function renderSeedHistory() {
+  controls.seedHistory.innerHTML = "";
+  controls.seedHistoryEmpty.classList.toggle("hidden", state.seedHistory.length > 0);
+
+  state.seedHistory.forEach((entry, index) => {
+    const item = document.createElement("article");
+    item.className = "seed-history-item";
+    item.title = "Apply this seed";
+    item.addEventListener("click", () => {
+      controls.seedInput.value = entry.seed;
+      state.pendingSeedHistoryLabel = "";
+      applySeedRecipe(entry.seed);
+    });
+
+    const image = document.createElement("img");
+    image.src = entry.preview;
+    image.alt = "";
+
+    const meta = document.createElement("div");
+    meta.className = "seed-history-meta";
+    const title = document.createElement("strong");
+    title.textContent = entry.label || `Seed ${index + 1}`;
+    const detail = document.createElement("span");
+    detail.textContent = seedSummary(entry.seed);
+    meta.append(title, detail);
+
+    const copy = document.createElement("button");
+    copy.type = "button";
+    copy.className = "mini-button";
+    copy.textContent = "Copy";
+    copy.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      controls.seedInput.value = entry.seed;
+      try {
+        await navigator.clipboard.writeText(entry.seed);
+        controls.statusText.textContent = "Copied history seed.";
+      } catch {
+        controls.statusText.textContent = "History seed is ready to copy.";
+      }
+    });
+
+    item.append(image, meta, copy);
+    controls.seedHistory.append(item);
+  });
+}
+
+function seedSummary(seed) {
+  if (seed.startsWith(recipePrefix)) return `${seed.slice(0, 18)}...`;
+  return seed;
 }
 
 function syncSeedToSettings() {
@@ -684,6 +857,23 @@ function base64UrlDecode(value) {
   const binary = atob(padded);
   const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
   return new TextDecoder().decode(bytes);
+}
+
+function readJson(key, fallback) {
+  try {
+    const value = localStorage.getItem(key);
+    return value ? JSON.parse(value) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeJson(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Storage can fail in private windows or when thumbnails fill the quota.
+  }
 }
 
 function createReadableSeed() {
@@ -804,6 +994,7 @@ function render(options = {}) {
   const elapsed = Math.round(performance.now() - started);
   controls.renderMeta.textContent = `${elapsed} ms`;
   controls.exportMeta.textContent = `${width} x ${height}`;
+  capturePendingSeedHistory();
 }
 
 function getDrawableSource() {
