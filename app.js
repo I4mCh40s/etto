@@ -202,6 +202,7 @@ const seedHistoryStorageKey = "etto.seedHistory";
 const panelStorageKey = "etto.collapsedPanels";
 const videoExportMaxLandscape = { width: 1280, height: 720 };
 const videoExportMaxPortrait = { width: 720, height: 1280 };
+const videoExportFps = 12;
 const defaultCollapsedPanels = new Set(["preset", "algorithm", "color"]);
 
 function init() {
@@ -1938,61 +1939,58 @@ async function exportVideo() {
     return;
   }
   if (state.isExportingVideo) return;
-  if (!outputCanvas.captureStream || typeof MediaRecorder === "undefined") {
-    controls.statusText.textContent = "This browser cannot record canvas video exports.";
-    return;
-  }
 
+  const originalPhase = Number(controls.phase.value);
+  const originalTime = Number.isFinite(sourceVideo.currentTime) ? sourceVideo.currentTime : 0;
   try {
     state.isExportingVideo = true;
     controls.exportVideo.disabled = true;
-    controls.exportVideo.textContent = "Recording...";
+    controls.exportVideo.textContent = "Rendering...";
     controls.statusText.textContent = "Preparing video export.";
 
     await ensureVideoReady();
+    if (!Number.isFinite(sourceVideo.duration) || sourceVideo.duration <= 0) {
+      throw new Error("The source video duration is unavailable.");
+    }
     state.videoExportSize = getVideoExportSize(sourceVideo.videoWidth, sourceVideo.videoHeight);
+    const duration = sourceVideo.duration;
+    const fps = videoExportFps;
+    const totalFrames = Math.max(1, Math.ceil(duration * fps));
     sourceVideo.pause();
-    await seekSourceVideo(0);
-    render();
-    applyWatermarkIfLocked();
 
-    const mimeType = preferredVideoMimeType();
-    const stream = outputCanvas.captureStream(30);
-    const recorder = createVideoRecorder(stream, mimeType);
-    const chunks = [];
-    const startedAt = performance.now();
-
-    recorder.addEventListener("dataavailable", (event) => {
-      if (event.data && event.data.size > 0) chunks.push(event.data);
-    });
-
-    const stopped = new Promise((resolve, reject) => {
-      recorder.addEventListener("stop", resolve, { once: true });
-      recorder.addEventListener("error", () => reject(recorder.error), { once: true });
-    });
-
-    const stopRecording = () => {
-      if (recorder.state !== "inactive") {
-        recorder.requestData();
-        recorder.stop();
+    let mp4Ready = false;
+    if (typeof VideoEncoder !== "undefined" && typeof VideoFrame !== "undefined") {
+      try {
+        controls.statusText.textContent = `Encoding fixed-FPS video at ${fps} fps, ${describeVideoExportSize(state.videoExportSize)}.`;
+        const blob = await encodeSourceVideoMp4(duration, fps, totalFrames, originalPhase);
+        downloadBlob(blob, `${state.sourceName || "etto"}-dither.mp4`);
+        controls.statusText.textContent = `Video export ready: MP4 at ${fps} fps, ${describeVideoExportSize(state.videoExportSize)}.`;
+        mp4Ready = true;
+      } catch (error) {
+        controls.statusText.textContent = `MP4 encoder unavailable: ${error.message || error}. Falling back to AVI.`;
       }
-    };
+    }
 
-    sourceVideo.addEventListener("ended", stopRecording, { once: true });
-    recorder.start(250);
-    await sourceVideo.play();
-    controls.playButton.textContent = "||";
-    controls.statusText.textContent = `Recording processed video at ${describeVideoExportSize(state.videoExportSize)}.`;
-    monitorVideoExport(startedAt);
-    await stopped;
-    stream.getTracks().forEach((track) => track.stop());
+    if (!mp4Ready) {
+      const frames = [];
+      for (let frame = 0; frame < totalFrames; frame++) {
+        const progress = totalFrames <= 1 ? 1 : frame / (totalFrames - 1);
+        const phase = (originalPhase + progress * 720) % 361;
+        const frameTime = Math.min(frame / fps, Math.max(0, duration - 0.001));
+        controls.phase.value = String(Math.round(phase));
+        await seekSourceVideo(frameTime);
+        render({ fullResolution: true });
+        applyWatermarkIfLocked();
+        frames.push(await canvasToJpegBytes(outputCanvas, 0.9));
+        controls.statusText.textContent = `Rendering fixed-FPS AVI fallback: ${Math.round(progress * 100)}%.`;
+        await nextBrowserFrame();
+      }
 
-    const finalType = recorder.mimeType || mimeType || "video/webm";
-    const extension = finalType.includes("mp4") ? "mp4" : "webm";
-    controls.statusText.textContent = "Finalizing video duration metadata.";
-    const blob = await finalizeRecordedVideo(chunks, finalType, sourceVideo.duration * 1000);
-    downloadBlob(blob, `${state.sourceName || "etto"}-dither.${extension}`);
-    controls.statusText.textContent = `Video export ready: ${extension.toUpperCase()}.`;
+      controls.statusText.textContent = "Muxing AVI fallback.";
+      const blob = createMjpegAvi(frames, outputCanvas.width, outputCanvas.height, fps);
+      downloadBlob(blob, `${state.sourceName || "etto"}-dither.avi`);
+      controls.statusText.textContent = `Video export ready: AVI at ${fps} fps, ${outputCanvas.width} x ${outputCanvas.height}.`;
+    }
   } catch (error) {
     controls.statusText.textContent = `Video export failed: ${error.message || error}`;
   } finally {
@@ -2000,7 +1998,10 @@ async function exportVideo() {
     state.videoExportSize = null;
     controls.exportVideo.disabled = false;
     controls.exportVideo.textContent = "Video";
+    controls.phase.value = String(originalPhase);
     sourceVideo.pause();
+    await seekSourceVideo(Math.min(originalTime, Math.max(0, (sourceVideo.duration || originalTime) - 0.001))).catch(() => {});
+    controls.playButton.textContent = ">";
     scheduleRender();
   }
 }
@@ -2013,7 +2014,7 @@ async function exportAnimation() {
   if (state.isExportingAnimation) return;
 
   const duration = Number(controls.animationDuration.value) || 5;
-  const fps = 12;
+  const fps = videoExportFps;
   const totalFrames = duration * fps;
   const originalMode = state.mode;
   const originalPhase = Number(controls.phase.value);
@@ -2116,6 +2117,77 @@ async function encodeStillAnimationMp4(duration, fps, totalFrames, originalPhase
     videoFrame.close();
 
     controls.statusText.textContent = `Encoding fixed-FPS MP4: ${Math.round(progress * 100)}%.`;
+    if (frame % 3 === 0) await nextBrowserFrame();
+  }
+
+  await encoder.flush();
+  encoder.close();
+
+  if (encodeError) throw encodeError;
+
+  if (!chunks.length || !decoderConfig?.description) {
+    throw new Error("H.264 encoder did not return MP4 decoder metadata.");
+  }
+
+  chunks.sort((a, b) => a.timestamp - b.timestamp);
+  const timescale = 90000;
+  const sampleDelta = Math.round(timescale / fps);
+  const mp4Bytes = createH264Mp4({
+    chunks,
+    width,
+    height,
+    timescale,
+    sampleDelta,
+    avcConfig: new Uint8Array(decoderConfig.description),
+  });
+  return new Blob([mp4Bytes], { type: "video/mp4" });
+}
+
+async function encodeSourceVideoMp4(duration, fps, totalFrames, originalPhase) {
+  await seekSourceVideo(0);
+  render({ fullResolution: true });
+  const width = outputCanvas.width;
+  const height = outputCanvas.height;
+  const config = await supportedH264EncoderConfig(width, height, fps);
+  const chunks = [];
+  let decoderConfig = null;
+  let encodeError = null;
+
+  const encoder = new VideoEncoder({
+    output: (chunk, metadata) => {
+      if (metadata?.decoderConfig?.description) decoderConfig = metadata.decoderConfig;
+      const data = new Uint8Array(chunk.byteLength);
+      chunk.copyTo(data);
+      chunks.push({
+        data,
+        duration: Math.round(1000000 / fps),
+        key: chunk.type === "key",
+        timestamp: chunk.timestamp,
+      });
+    },
+    error: (error) => {
+      encodeError = error;
+    },
+  });
+
+  encoder.configure(config);
+  for (let frame = 0; frame < totalFrames; frame++) {
+    const progress = totalFrames <= 1 ? 1 : frame / (totalFrames - 1);
+    const phase = (originalPhase + progress * 720) % 361;
+    const frameTime = Math.min(frame / fps, Math.max(0, duration - 0.001));
+    controls.phase.value = String(Math.round(phase));
+    await seekSourceVideo(frameTime);
+    render({ fullResolution: true });
+    applyWatermarkIfLocked();
+
+    const videoFrame = new VideoFrame(outputCanvas, {
+      timestamp: Math.round((frame * 1000000) / fps),
+      duration: Math.round(1000000 / fps),
+    });
+    encoder.encode(videoFrame, { keyFrame: frame === 0 || frame % fps === 0 });
+    videoFrame.close();
+
+    controls.statusText.textContent = `Encoding fixed-FPS video: ${Math.round(progress * 100)}%.`;
     if (frame % 3 === 0) await nextBrowserFrame();
   }
 
