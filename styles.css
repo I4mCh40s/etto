@@ -234,6 +234,7 @@ input:focus-visible,
 .file-row,
 .export-grid,
 .utility-row,
+.seed-actions,
 .segmented,
 .view-tabs {
   display: grid;
@@ -244,6 +245,14 @@ input:focus-visible,
 .export-grid,
 .utility-row {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.seed-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+#randomizeButton {
+  grid-column: 1 / -1;
 }
 
 .wide-button {
@@ -472,20 +481,6 @@ input[type="range"] {
   font-size: 0.78rem;
 }
 
-#textControls {
-  display: grid;
-  gap: 10px;
-}
-
-.text-muted-controls {
-  opacity: 0.48;
-}
-
-.text-muted-controls input,
-.text-muted-controls select {
-  pointer-events: none;
-}
-
 .workspace {
   display: grid;
   grid-template-rows: auto 1fr auto;
@@ -647,7 +642,8 @@ canvas {
 
   .file-row,
   .export-grid,
-  .utility-row {
+  .utility-row,
+  .seed-actions {
     grid-template-columns: 1fr;
   }
 }

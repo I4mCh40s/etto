@@ -33,15 +33,10 @@ const controls = {
   depth: document.querySelector("#depth"),
   brightness: document.querySelector("#brightness"),
   contrast: document.querySelector("#contrast"),
-  textEnabled: document.querySelector("#textEnabled"),
-  textControls: document.querySelector("#textControls"),
-  textContent: document.querySelector("#textContent"),
-  textFont: document.querySelector("#textFont"),
-  textColor: document.querySelector("#textColor"),
-  textSize: document.querySelector("#textSize"),
-  textX: document.querySelector("#textX"),
-  textY: document.querySelector("#textY"),
-  textAlign: document.querySelector("#textAlign"),
+  seedInput: document.querySelector("#seedInput"),
+  randomizeButton: document.querySelector("#randomizeButton"),
+  applySeedButton: document.querySelector("#applySeedButton"),
+  copySeedButton: document.querySelector("#copySeedButton"),
   blur: document.querySelector("#blur"),
   extractPalette: document.querySelector("#extractPalette"),
   exportPng: document.querySelector("#exportPng"),
@@ -181,7 +176,10 @@ let state = {
   isExportingVideo: false,
   isExportingAnimation: false,
   invertColors: false,
+  isApplyingRecipe: false,
 };
+
+const recipePrefix = "ETTO1-";
 
 function init() {
   populateSelects();
@@ -189,6 +187,7 @@ function init() {
   drawSample();
   renderEffectStack();
   updatePalettePreview();
+  syncSeedToSettings();
   scheduleRender();
 }
 
@@ -226,7 +225,12 @@ function bindEvents() {
   controls.resetButton.addEventListener("click", resetWorkspace);
   controls.applyPreset.addEventListener("click", applyPreset);
   controls.selectedEffectAmount.addEventListener("input", updateSelectedEffectAmount);
-  controls.textEnabled.addEventListener("input", updateTextControlsState);
+  controls.randomizeButton.addEventListener("click", randomizeSeed);
+  controls.applySeedButton.addEventListener("click", () => applySeedRecipe(controls.seedInput.value));
+  controls.copySeedButton.addEventListener("click", copySeed);
+  controls.seedInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") applySeedRecipe(controls.seedInput.value);
+  });
   controls.imageModeButton.addEventListener("click", () => setMode("image"));
   controls.videoModeButton.addEventListener("click", () => setMode("video"));
   controls.extractPalette.addEventListener("click", extractPalette);
@@ -260,19 +264,12 @@ function bindEvents() {
     controls.depth,
     controls.brightness,
     controls.contrast,
-    controls.textEnabled,
-    controls.textContent,
-    controls.textFont,
-    controls.textColor,
-    controls.textSize,
-    controls.textX,
-    controls.textY,
-    controls.textAlign,
     controls.blur,
     controls.lossless,
   ].forEach((control) => {
     control.addEventListener("input", () => {
       updatePalettePreview();
+      syncSeedToSettings();
       scheduleRender();
     });
   });
@@ -374,6 +371,7 @@ function toggleInvert() {
   state.invertColors = !state.invertColors;
   updateInvertButton();
   controls.statusText.textContent = state.invertColors ? "Invert colors enabled." : "Invert colors disabled.";
+  syncSeedToSettings();
   scheduleRender();
 }
 
@@ -395,30 +393,18 @@ function resetWorkspace() {
   controls.brightness.value = "0";
   controls.contrast.value = "18";
   controls.blur.value = "0.75";
-  controls.textEnabled.checked = false;
-  controls.textContent.value = "ETTO";
-  controls.textFont.value = "Inter, Arial, sans-serif";
-  controls.textColor.value = "#ffffff";
-  controls.textSize.value = "14";
-  controls.textX.value = "50";
-  controls.textY.value = "50";
-  controls.textAlign.value = "center";
   controls.animationDuration.value = "5";
   controls.lossless.checked = true;
   state.effects = [];
   state.selectedEffectIndex = -1;
   state.invertColors = false;
   updateInvertButton();
-  updateTextControlsState();
   setView("compare");
   updatePalettePreview();
   renderEffectStack();
+  syncSeedToSettings();
   controls.statusText.textContent = "Reset controls and removed effects.";
   scheduleRender();
-}
-
-function updateTextControlsState() {
-  controls.textControls.classList.toggle("text-muted-controls", !controls.textEnabled.checked);
 }
 
 function applyPreset() {
@@ -523,7 +509,232 @@ function applyPreset() {
   state.selectedEffectIndex = state.effects.length ? 0 : -1;
   updatePalettePreview();
   renderEffectStack();
+  syncSeedToSettings();
   scheduleRender();
+}
+
+function randomizeSeed() {
+  const seed = createReadableSeed();
+  applySeedRecipe(seed);
+}
+
+function applySeedRecipe(seedValue) {
+  const seed = normalizeSeed(seedValue);
+  const recipe = decodeRecipeSeed(seed);
+  state.isApplyingRecipe = true;
+
+  if (recipe) {
+    applySettingsRecipe(recipe);
+    state.isApplyingRecipe = false;
+    updateInvertButton();
+    updatePalettePreview();
+    renderEffectStack();
+    syncSeedToSettings();
+    controls.statusText.textContent = "Applied recipe seed.";
+    scheduleRender();
+    return;
+  }
+
+  if (seed.startsWith(recipePrefix)) {
+    state.isApplyingRecipe = false;
+    controls.statusText.textContent = "That recipe seed could not be read.";
+    return;
+  }
+
+  const rng = mulberry32(hashSeed(seed));
+  const paletteNames = Object.keys(palettes).filter((name) => name !== "Extracted");
+  const algorithmIds = algorithms.map(([id]) => id);
+  const effectTypes = ["epsilon", "blur", "trail", "bloom", "jpeg", "chromatic", "scanlines", "vignette", "noise", "cmyk"];
+
+  controls.algorithmSelect.value = pick(rng, algorithmIds);
+  controls.paletteSelect.value = pick(rng, paletteNames);
+  controls.resolution.value = fixed(0.52 + rng() * 0.43, 2);
+  controls.threshold.value = String(Math.round(48 + rng() * 154));
+  controls.patternSize.value = fixed(0.55 + rng() * 2.85, 1);
+  controls.errorStrength.value = fixed(0.2 + rng() * 1.12, 2);
+  controls.phase.value = String(Math.round(rng() * 360));
+  controls.depth.value = String(2 + Math.floor(rng() * 7));
+  controls.brightness.value = String(Math.round(-42 + rng() * 70));
+  controls.contrast.value = String(Math.round(18 + rng() * 82));
+  controls.blur.value = fixed(rng() * 1.75, 2);
+  state.invertColors = rng() > 0.78;
+
+  const shuffledEffects = shuffle(effectTypes, rng);
+  const count = 3 + Math.floor(rng() * 4);
+  state.effects = shuffledEffects.slice(0, count).map((type) => ({
+    type,
+    amount: Number(fixed(0.18 + rng() * 1.05, 2)),
+  }));
+  state.selectedEffectIndex = state.effects.length ? 0 : -1;
+  state.isApplyingRecipe = false;
+
+  updateInvertButton();
+  updatePalettePreview();
+  renderEffectStack();
+  syncSeedToSettings();
+  controls.statusText.textContent = `Randomized from ${seed}.`;
+  scheduleRender();
+}
+
+async function copySeed() {
+  syncSeedToSettings();
+  const seed = controls.seedInput.value;
+  try {
+    await navigator.clipboard.writeText(seed);
+    controls.statusText.textContent = "Copied recipe seed.";
+  } catch {
+    controls.statusText.textContent = "Recipe seed is ready to copy.";
+  }
+}
+
+function syncSeedToSettings() {
+  if (state.isApplyingRecipe) return;
+  controls.seedInput.value = encodeRecipeSeed(readSettingsRecipe());
+}
+
+function readSettingsRecipe() {
+  const recipe = {
+    v: 1,
+    a: controls.algorithmSelect.value,
+    p: controls.paletteSelect.value,
+    r: controls.resolution.value,
+    t: controls.threshold.value,
+    z: controls.patternSize.value,
+    e: controls.errorStrength.value,
+    h: controls.phase.value,
+    d: controls.depth.value,
+    b: controls.brightness.value,
+    c: controls.contrast.value,
+    g: controls.blur.value,
+    i: state.invertColors ? 1 : 0,
+    o: controls.lossless.checked ? 1 : 0,
+    fx: state.effects.map((effect) => [effect.type, Number(effect.amount)]),
+  };
+
+  if (recipe.p === "Extracted") {
+    recipe.x = palettes.Extracted;
+  }
+
+  return recipe;
+}
+
+function applySettingsRecipe(recipe) {
+  if (Array.isArray(recipe.x)) {
+    palettes.Extracted = recipe.x.filter((color) => /^#[0-9a-f]{6}$/i.test(color)).slice(0, 8);
+  }
+
+  setSelectValue(controls.algorithmSelect, recipe.a, "floyd");
+  setSelectValue(controls.paletteSelect, recipe.p, "Game Console");
+  setControlValue(controls.resolution, recipe.r);
+  setControlValue(controls.threshold, recipe.t);
+  setControlValue(controls.patternSize, recipe.z);
+  setControlValue(controls.errorStrength, recipe.e);
+  setControlValue(controls.phase, recipe.h);
+  setControlValue(controls.depth, recipe.d);
+  setControlValue(controls.brightness, recipe.b);
+  setControlValue(controls.contrast, recipe.c);
+  setControlValue(controls.blur, recipe.g);
+  controls.lossless.checked = recipe.o !== 0;
+  state.invertColors = recipe.i === 1;
+
+  const validEffectTypes = new Set(["epsilon", "blur", "trail", "bloom", "jpeg", "chromatic", "scanlines", "vignette", "noise", "cmyk"]);
+  state.effects = Array.isArray(recipe.fx)
+    ? recipe.fx
+        .map(([type, amount]) => ({ type, amount: Number(amount) }))
+        .filter((effect) => validEffectTypes.has(effect.type) && Number.isFinite(effect.amount))
+    : [];
+  state.selectedEffectIndex = state.effects.length ? 0 : -1;
+}
+
+function setSelectValue(control, value, fallback) {
+  const hasValue = Array.from(control.options).some((option) => option.value === value);
+  control.value = hasValue ? value : fallback;
+}
+
+function setControlValue(control, value) {
+  if (value === undefined || value === null) return;
+  control.value = String(value);
+}
+
+function encodeRecipeSeed(recipe) {
+  return `${recipePrefix}${base64UrlEncode(JSON.stringify(recipe))}`;
+}
+
+function decodeRecipeSeed(seed) {
+  if (!seed.startsWith(recipePrefix)) return null;
+  try {
+    return JSON.parse(base64UrlDecode(seed.slice(recipePrefix.length)));
+  } catch {
+    controls.statusText.textContent = "That recipe seed could not be read.";
+    return null;
+  }
+}
+
+function base64UrlEncode(value) {
+  const bytes = new TextEncoder().encode(value);
+  let binary = "";
+  bytes.forEach((byte) => {
+    binary += String.fromCharCode(byte);
+  });
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function base64UrlDecode(value) {
+  const padded = value.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(value.length / 4) * 4, "=");
+  const binary = atob(padded);
+  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+}
+
+function createReadableSeed() {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let seed = "ETTO-";
+  for (let i = 0; i < 8; i++) {
+    seed += alphabet[Math.floor(Math.random() * alphabet.length)];
+  }
+  return seed;
+}
+
+function normalizeSeed(seedValue) {
+  const raw = String(seedValue || "").trim();
+  if (raw.startsWith(recipePrefix)) return raw;
+  const cleaned = raw.toUpperCase().replace(/[^A-Z0-9-]/g, "");
+  return cleaned || createReadableSeed();
+}
+
+function hashSeed(seed) {
+  let hash = 2166136261;
+  for (let i = 0; i < seed.length; i++) {
+    hash ^= seed.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function mulberry32(seed) {
+  return () => {
+    let value = seed += 0x6d2b79f5;
+    value = Math.imul(value ^ value >>> 15, value | 1);
+    value ^= value + Math.imul(value ^ value >>> 7, value | 61);
+    return ((value ^ value >>> 14) >>> 0) / 4294967296;
+  };
+}
+
+function pick(rng, items) {
+  return items[Math.floor(rng() * items.length)];
+}
+
+function shuffle(items, rng) {
+  const copy = [...items];
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+}
+
+function fixed(value, places) {
+  return value.toFixed(places).replace(/\.?0+$/, "");
 }
 
 function updateVideoMeta() {
@@ -582,7 +793,6 @@ function render(options = {}) {
   outputCanvas.height = height;
   sourceCtx.drawImage(source, 0, 0, width, height);
   applySourceInvert(width, height);
-  drawTextLayer(width, height);
 
   const imageData = sourceCtx.getImageData(0, 0, width, height);
   applyPreAdjustments(imageData);
@@ -611,29 +821,6 @@ function applySourceInvert(width, height) {
     data[i + 2] = 255 - data[i + 2];
   }
   sourceCtx.putImageData(imageData, 0, 0);
-}
-
-function drawTextLayer(width, height) {
-  if (!controls.textEnabled.checked) return;
-  const text = controls.textContent.value.trim();
-  if (!text) return;
-
-  const sizePercent = Number(controls.textSize.value);
-  const fontSize = Math.max(8, Math.round((Math.min(width, height) * sizePercent) / 100));
-  const x = (Number(controls.textX.value) / 100) * width;
-  const y = (Number(controls.textY.value) / 100) * height;
-
-  sourceCtx.save();
-  sourceCtx.font = `700 ${fontSize}px ${controls.textFont.value}`;
-  sourceCtx.fillStyle = controls.textColor.value;
-  sourceCtx.textAlign = controls.textAlign.value;
-  sourceCtx.textBaseline = "middle";
-  sourceCtx.shadowColor = "rgba(0, 0, 0, 0.35)";
-  sourceCtx.shadowBlur = Math.max(2, fontSize * 0.08);
-  sourceCtx.shadowOffsetX = Math.max(1, fontSize * 0.03);
-  sourceCtx.shadowOffsetY = Math.max(1, fontSize * 0.03);
-  sourceCtx.fillText(text, x, y, width * 0.92);
-  sourceCtx.restore();
 }
 
 function applyPreAdjustments(imageData) {
@@ -1129,6 +1316,7 @@ function extractPalette() {
     });
   controls.paletteSelect.value = "Extracted";
   updatePalettePreview();
+  syncSeedToSettings();
   controls.statusText.textContent = "Palette extracted from the current source.";
   scheduleRender();
 }
@@ -1137,6 +1325,7 @@ function addEffect() {
   state.effects.push({ type: controls.effectSelect.value, amount: 0.55 });
   state.selectedEffectIndex = state.effects.length - 1;
   renderEffectStack();
+  syncSeedToSettings();
   scheduleRender();
 }
 
@@ -1195,6 +1384,7 @@ function moveEffect(index, delta) {
   state.effects.splice(next, 0, effect);
   state.selectedEffectIndex = next;
   renderEffectStack();
+  syncSeedToSettings();
   scheduleRender();
 }
 
@@ -1203,6 +1393,7 @@ function removeEffect(index) {
   if (state.effects.length === 0) state.selectedEffectIndex = -1;
   else state.selectedEffectIndex = Math.min(index, state.effects.length - 1);
   renderEffectStack();
+  syncSeedToSettings();
   scheduleRender();
 }
 
@@ -1211,6 +1402,7 @@ function updateSelectedEffectAmount() {
   if (!effect) return;
   effect.amount = Number(controls.selectedEffectAmount.value);
   updateEffectEditor();
+  syncSeedToSettings();
   scheduleRender();
 }
 
