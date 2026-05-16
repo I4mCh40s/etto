@@ -6,6 +6,7 @@ const watermarkImage = new Image();
 const sourceCtx = sourceCanvas.getContext("2d", { willReadFrequently: true });
 const outputCtx = outputCanvas.getContext("2d", { willReadFrequently: true });
 const soloCtx = soloCanvas.getContext("2d", { willReadFrequently: true });
+let shaderRenderer = null;
 
 const controls = {
   imageInput: document.querySelector("#imageInput"),
@@ -21,11 +22,8 @@ const controls = {
   effectSelect: document.querySelector("#effectSelect"),
   addEffect: document.querySelector("#addEffect"),
   effectStack: document.querySelector("#effectStack"),
-  effectEditor: document.querySelector("#effectEditor"),
-  selectedEffectName: document.querySelector("#selectedEffectName"),
-  selectedEffectParam: document.querySelector("#selectedEffectParam"),
-  selectedEffectValue: document.querySelector("#selectedEffectValue"),
-  selectedEffectAmount: document.querySelector("#selectedEffectAmount"),
+  effectEditorsPanel: document.querySelector("#effectEditorsPanel"),
+  effectEditors: document.querySelector("#effectEditors"),
   resolution: document.querySelector("#resolution"),
   threshold: document.querySelector("#threshold"),
   patternSize: document.querySelector("#patternSize"),
@@ -204,6 +202,7 @@ const videoExportMaxLandscape = { width: 1280, height: 720 };
 const videoExportMaxPortrait = { width: 720, height: 1280 };
 const videoExportFps = 12;
 const defaultCollapsedPanels = new Set(["preset", "algorithm", "color"]);
+const shaderEffectTypes = new Set(["film", "gradient", "ascii-shader", "light-leak", "prism"]);
 
 function init() {
   populateSelects();
@@ -311,7 +310,6 @@ function bindEvents() {
   controls.invertButton.addEventListener("click", toggleInvert);
   controls.resetButton.addEventListener("click", resetWorkspace);
   controls.applyPreset.addEventListener("click", applyPreset);
-  controls.selectedEffectAmount.addEventListener("input", updateSelectedEffectAmount);
   controls.randomizeButton.addEventListener("click", randomizeSeed);
   controls.applySeedButton.addEventListener("click", () => {
     if (requireSeedUnlock("Unlock to paste and apply recipe seeds.")) applySeedRecipe(controls.seedInput.value);
@@ -599,6 +597,62 @@ function applyPreset() {
       { type: "noise", amount: 0.08 },
     ];
     controls.statusText.textContent = "Applied Arcade Poster preset.";
+  } else if (preset === "analog-dream") {
+    controls.algorithmSelect.value = "solar";
+    controls.paletteSelect.value = "Warm Poster";
+    controls.resolution.value = "0.82";
+    controls.threshold.value = "146";
+    controls.patternSize.value = "1.4";
+    controls.errorStrength.value = "0.4";
+    controls.phase.value = "64";
+    controls.depth.value = "5";
+    controls.brightness.value = "2";
+    controls.contrast.value = "46";
+    controls.blur.value = "0.25";
+    state.effects = [
+      { type: "film", amount: 0.82 },
+      { type: "light-leak", amount: 0.56 },
+      { type: "bloom", amount: 0.35 },
+      { type: "noise", amount: 0.18 },
+    ];
+    controls.statusText.textContent = "Applied Analog Dream preset.";
+  } else if (preset === "gradient-oracle") {
+    controls.algorithmSelect.value = "contour";
+    controls.paletteSelect.value = "Bubblegum CRT";
+    controls.resolution.value = "0.88";
+    controls.threshold.value = "118";
+    controls.patternSize.value = "1.8";
+    controls.errorStrength.value = "0.25";
+    controls.phase.value = "112";
+    controls.depth.value = "5";
+    controls.brightness.value = "-6";
+    controls.contrast.value = "72";
+    controls.blur.value = "0";
+    state.effects = [
+      { type: "gradient", amount: 0.9 },
+      { type: "prism", amount: 0.42 },
+      { type: "vignette", amount: 0.35 },
+    ];
+    controls.statusText.textContent = "Applied Gradient Oracle preset.";
+  } else if (preset === "matrix-bloom") {
+    controls.algorithmSelect.value = "ascii";
+    controls.paletteSelect.value = "Handheld Green";
+    controls.resolution.value = "0.72";
+    controls.threshold.value = "96";
+    controls.patternSize.value = "1";
+    controls.errorStrength.value = "0.62";
+    controls.phase.value = "20";
+    controls.depth.value = "4";
+    controls.brightness.value = "-18";
+    controls.contrast.value = "88";
+    controls.blur.value = "0.2";
+    state.effects = [
+      { type: "ascii-shader", amount: 0.88 },
+      { type: "gradient", amount: 0.38 },
+      { type: "bloom", amount: 0.58 },
+      { type: "scanlines", amount: 0.5 },
+    ];
+    controls.statusText.textContent = "Applied Matrix Bloom preset.";
   }
   state.selectedEffectIndex = state.effects.length ? 0 : -1;
   updatePalettePreview();
@@ -640,7 +694,23 @@ function applySeedRecipe(seedValue) {
   const rng = mulberry32(hashSeed(seed));
   const paletteNames = Object.keys(palettes).filter((name) => name !== "Extracted");
   const algorithmIds = algorithms.map(([id]) => id);
-  const effectTypes = ["epsilon", "blur", "trail", "bloom", "jpeg", "chromatic", "scanlines", "vignette", "noise", "cmyk"];
+  const effectTypes = [
+    "epsilon",
+    "blur",
+    "trail",
+    "bloom",
+    "jpeg",
+    "chromatic",
+    "scanlines",
+    "vignette",
+    "noise",
+    "cmyk",
+    "film",
+    "gradient",
+    "ascii-shader",
+    "light-leak",
+    "prism",
+  ];
 
   controls.algorithmSelect.value = pick(rng, algorithmIds);
   controls.paletteSelect.value = pick(rng, paletteNames);
@@ -660,6 +730,7 @@ function applySeedRecipe(seedValue) {
   state.effects = shuffledEffects.slice(0, count).map((type) => ({
     type,
     amount: Number(fixed(0.18 + rng() * 1.05, 2)),
+    params: randomEffectParams(type, rng),
   }));
   state.selectedEffectIndex = state.effects.length ? 0 : -1;
   state.isApplyingRecipe = false;
@@ -914,7 +985,7 @@ function readSettingsRecipe() {
     g: controls.blur.value,
     i: state.invertColors ? 1 : 0,
     o: controls.lossless.checked ? 1 : 0,
-    fx: state.effects.map((effect) => [effect.type, Number(effect.amount)]),
+    fx: state.effects.map((effect) => [effect.type, Number(effect.amount), effect.params || {}]),
   };
 
   if (recipe.p === "Extracted") {
@@ -943,10 +1014,30 @@ function applySettingsRecipe(recipe) {
   controls.lossless.checked = recipe.o !== 0;
   state.invertColors = recipe.i === 1;
 
-  const validEffectTypes = new Set(["epsilon", "blur", "trail", "bloom", "jpeg", "chromatic", "scanlines", "vignette", "noise", "cmyk"]);
+  const validEffectTypes = new Set([
+    "epsilon",
+    "blur",
+    "trail",
+    "bloom",
+    "jpeg",
+    "chromatic",
+    "scanlines",
+    "vignette",
+    "noise",
+    "cmyk",
+    "film",
+    "gradient",
+    "ascii-shader",
+    "light-leak",
+    "prism",
+  ]);
   state.effects = Array.isArray(recipe.fx)
     ? recipe.fx
-        .map(([type, amount]) => ({ type, amount: Number(amount) }))
+        .map(([type, amount, params]) => ({
+          type,
+          amount: Number(amount),
+          params: sanitizeEffectParams(type, params),
+        }))
         .filter((effect) => validEffectTypes.has(effect.type) && Number.isFinite(effect.amount))
     : [];
   state.selectedEffectIndex = state.effects.length ? 0 : -1;
@@ -1126,8 +1217,7 @@ function render(options = {}) {
   const imageData = sourceCtx.getImageData(0, 0, width, height);
   applyPreAdjustments(imageData);
   const processed = applyAlgorithm(imageData);
-  const effected = applyEffects(processed);
-  outputCtx.putImageData(effected, 0, 0);
+  applyEffectStackToOutput(processed, width, height);
   drawSolo();
 
   const elapsed = Math.round(performance.now() - started);
@@ -1465,22 +1555,527 @@ function glitchOffset(id, x, y, phase, strength) {
   return 0;
 }
 
-function applyEffects(imageData) {
-  const stacked = state.effects.reduce((current, effect) => {
-    if (effect.type === "epsilon") return epsilonGlow(current, effect.amount);
-    if (effect.type === "blur") return blurImage(current, effect.amount * 3);
-    if (effect.type === "trail") return signalTrail(current, effect.amount);
-    if (effect.type === "bloom") return phosphorBloom(current, effect.amount);
-    if (effect.type === "jpeg") return jpegGlitch(current, effect.amount);
-    if (effect.type === "chromatic") return chromaticAberration(current, effect.amount);
-    if (effect.type === "scanlines") return scanlines(current, effect.amount);
-    if (effect.type === "vignette") return vignette(current, effect.amount);
-    if (effect.type === "noise") return signalNoise(current, effect.amount);
-    if (effect.type === "cmyk") return cmykHalftone(current, effect.amount);
-    return current;
-  }, imageData);
+function applyEffectStackToOutput(imageData, width, height) {
+  outputCtx.putImageData(imageData, 0, 0);
+  const context = effectControlContext();
+
+  state.effects.forEach((effect) => {
+    if (shaderEffectTypes.has(effect.type)) {
+      applySingleShaderEffectToOutput(width, height, effect, context);
+      return;
+    }
+
+    const current = outputCtx.getImageData(0, 0, width, height);
+    const effected = applyCpuEffect(current, effect, context);
+    if (effected !== current) outputCtx.putImageData(effected, 0, 0);
+  });
+
   const blurAmount = Number(controls.blur.value);
-  return blurAmount > 0 ? blurImage(stacked, blurAmount) : stacked;
+  if (blurAmount > 0) {
+    outputCtx.putImageData(blurImage(outputCtx.getImageData(0, 0, width, height), blurAmount), 0, 0);
+  }
+}
+
+function applyCpuEffect(imageData, effect, context) {
+  const amount = adjustedEffectAmount(effect, context);
+  if (effect.type === "epsilon") return epsilonGlow(imageData, amount);
+  if (effect.type === "blur") return blurImage(imageData, amount * 3 * context.patternSizeScale);
+  if (effect.type === "trail") return signalTrail(imageData, amount);
+  if (effect.type === "bloom") return phosphorBloom(imageData, amount);
+  if (effect.type === "jpeg") return jpegGlitch(imageData, amount);
+  if (effect.type === "chromatic") return chromaticAberration(imageData, amount);
+  if (effect.type === "scanlines") return scanlines(imageData, amount);
+  if (effect.type === "vignette") return vignette(imageData, amount);
+  if (effect.type === "noise") return signalNoise(imageData, amount);
+  if (effect.type === "cmyk") return cmykHalftone(imageData, amount);
+  return imageData;
+}
+
+function applySingleShaderEffectToOutput(width, height, effect, context) {
+  const amounts = shaderEffectAmounts(effect, context);
+  if (!amounts.active) return;
+
+  const renderer = getShaderRenderer();
+  if (!renderer) return;
+
+  const phase = Number(controls.phase.value) * Math.PI / 180;
+  renderer.canvas.width = width;
+  renderer.canvas.height = height;
+  renderer.render(outputCanvas, sourceCanvas, width, height, phase, amounts, context);
+  outputCtx.clearRect(0, 0, width, height);
+  outputCtx.drawImage(renderer.canvas, 0, 0, width, height);
+}
+
+function shaderEffectAmounts(effect, context) {
+  const amounts = {
+    active: false,
+    film: 0,
+    gradient: 0,
+    ascii: 0,
+    leak: 0,
+    prism: 0,
+    asciiDensity: 0.75,
+    asciiTileAspect: 0.58,
+    asciiCharacterColor: [1, 1, 1],
+    asciiBackgroundColor: [0, 0, 0],
+    asciiInvert: 0,
+    asciiOverlay: 0,
+    asciiCutDarks: 0.03,
+    asciiCutLights: 0,
+    filmGrain: 0.55,
+    filmWarmth: 0.45,
+    gradientBias: 0.5,
+    leakPosition: 0.5,
+    prismDirection: 0.5,
+  };
+
+  const amount = adjustedEffectAmount(effect, context);
+  if (effect.type === "film") {
+    const params = sanitizeEffectParams(effect.type, effect.params);
+    amounts.film = amount;
+    amounts.filmGrain = params.grain;
+    amounts.filmWarmth = params.warmth;
+  } else if (effect.type === "gradient") {
+    const params = sanitizeEffectParams(effect.type, effect.params);
+    amounts.gradient = amount;
+    amounts.gradientBias = params.bias;
+  }
+  else if (effect.type === "ascii-shader") {
+    const params = sanitizeEffectParams(effect.type, effect.params);
+    amounts.ascii = amount;
+    amounts.asciiDensity = params.density;
+    amounts.asciiTileAspect = params.tileAspect;
+    amounts.asciiCharacterColor = hexToUnitRgb(params.characterColor);
+    amounts.asciiBackgroundColor = hexToUnitRgb(params.backgroundColor);
+    amounts.asciiInvert = params.invert ? 1 : 0;
+    amounts.asciiOverlay = params.overlay ? 1 : 0;
+    amounts.asciiCutDarks = params.cutDarks;
+    amounts.asciiCutLights = params.cutLights;
+  }
+  else if (effect.type === "light-leak") {
+    const params = sanitizeEffectParams(effect.type, effect.params);
+    amounts.leak = amount;
+    amounts.leakPosition = params.position;
+  } else if (effect.type === "prism") {
+    const params = sanitizeEffectParams(effect.type, effect.params);
+    amounts.prism = amount;
+    amounts.prismDirection = params.direction;
+  }
+
+  amounts.film = Math.min(1.5, amounts.film);
+  amounts.gradient = Math.min(1.5, amounts.gradient);
+  amounts.ascii = Math.min(1.5, amounts.ascii);
+  amounts.leak = Math.min(1.5, amounts.leak);
+  amounts.prism = Math.min(1.5, amounts.prism);
+  amounts.active = amounts.film + amounts.gradient + amounts.ascii + amounts.leak + amounts.prism > 0;
+  return amounts;
+}
+
+function effectControlContext() {
+  const patternSize = Number(controls.patternSize.value) || 1;
+  const threshold = Number(controls.threshold.value) || 132;
+  const errorStrength = Number(controls.errorStrength.value) || 0.95;
+  const depth = Number(controls.depth.value) || 4;
+  const brightness = Number(controls.brightness.value) || 0;
+  const contrast = Number(controls.contrast.value) || 0;
+  return {
+    patternSize,
+    patternSizeScale: Math.max(0.25, Math.min(4, patternSize)),
+    threshold,
+    thresholdNorm: threshold / 255,
+    errorStrength,
+    depth,
+    brightness,
+    brightnessNorm: brightness / 100,
+    contrast,
+    contrastNorm: contrast / 100,
+  };
+}
+
+function adjustedEffectAmount(effect, context) {
+  const base = Math.max(0, Number(effect.amount) || 0);
+  const params = sanitizeEffectParams(effect.type, effect.params);
+  const detail = Number(params.detail) || 1;
+  const byType = {
+    epsilon: 0.82 + context.depth * 0.035 + Math.max(0, context.brightnessNorm) * 0.25,
+    blur: 0.55 + context.patternSizeScale * 0.32,
+    trail: 0.55 + context.errorStrength * 0.55 + context.patternSizeScale * 0.08,
+    bloom: 0.75 + context.depth * 0.04 + Math.max(0, context.contrastNorm) * 0.18,
+    jpeg: 0.48 + context.patternSizeScale * 0.26 + context.errorStrength * 0.24,
+    chromatic: 0.58 + context.patternSizeScale * 0.22 + Math.max(0, context.contrastNorm) * 0.16,
+    scanlines: 0.62 + context.patternSizeScale * 0.12 + Math.max(0, context.contrastNorm) * 0.18,
+    vignette: 0.72 + Math.max(0, context.contrastNorm) * 0.24,
+    noise: 0.35 + context.errorStrength * 0.7,
+    cmyk: 0.52 + context.patternSizeScale * 0.2 + context.depth * 0.025,
+    film: 0.65 + context.errorStrength * 0.28 + Math.max(0, context.contrastNorm) * 0.18,
+    gradient: 0.7 + context.depth * 0.035 + Math.abs(context.brightnessNorm) * 0.1,
+    "ascii-shader": 0.72 + context.errorStrength * 0.18 + Math.max(0, context.contrastNorm) * 0.12,
+    "light-leak": 0.6 + Math.max(0, context.brightnessNorm) * 0.35,
+    prism: 0.58 + context.patternSizeScale * 0.16 + context.errorStrength * 0.12,
+  };
+  return Math.max(0, Math.min(1.5, base * (byType[effect.type] || 1) * detail));
+}
+
+function getShaderRenderer() {
+  if (shaderRenderer) return shaderRenderer;
+
+  const canvas = document.createElement("canvas");
+  const gl = canvas.getContext("webgl", {
+    alpha: false,
+    antialias: false,
+    depth: false,
+    stencil: false,
+    premultipliedAlpha: false,
+    preserveDrawingBuffer: true,
+  });
+  if (!gl) {
+    controls.statusText.textContent = "WebGL effects are unavailable in this browser.";
+    return null;
+  }
+
+  const program = createShaderProgram(gl, shaderVertexSource(), shaderFragmentSource());
+  if (!program) return null;
+
+  const position = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, position);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+    -1, -1,
+    1, -1,
+    -1, 1,
+    -1, 1,
+    1, -1,
+    1, 1,
+  ]), gl.STATIC_DRAW);
+
+  const texCoord = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, texCoord);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+    0, 1,
+    1, 1,
+    0, 0,
+    0, 0,
+    1, 1,
+    1, 0,
+  ]), gl.STATIC_DRAW);
+
+  const texture = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, texture);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+
+  const sourceTexture = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, sourceTexture);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+
+  const asciiAtlas = createAsciiAtlas();
+  const asciiTexture = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, asciiTexture);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, asciiAtlas.canvas);
+
+  shaderRenderer = {
+    canvas,
+    gl,
+    program,
+    texture,
+    sourceTexture,
+    asciiTexture,
+    asciiCharCount: asciiAtlas.charCount,
+    attributes: {
+      position: gl.getAttribLocation(program, "a_position"),
+      texCoord: gl.getAttribLocation(program, "a_texCoord"),
+    },
+    uniforms: {
+      texture: gl.getUniformLocation(program, "u_texture"),
+      sourceTexture: gl.getUniformLocation(program, "u_sourceTexture"),
+      asciiAtlas: gl.getUniformLocation(program, "u_asciiAtlas"),
+      asciiCharCount: gl.getUniformLocation(program, "u_asciiCharCount"),
+      resolution: gl.getUniformLocation(program, "u_resolution"),
+      phase: gl.getUniformLocation(program, "u_phase"),
+      patternSize: gl.getUniformLocation(program, "u_patternSize"),
+      threshold: gl.getUniformLocation(program, "u_threshold"),
+      errorStrength: gl.getUniformLocation(program, "u_errorStrength"),
+      depth: gl.getUniformLocation(program, "u_depth"),
+      brightness: gl.getUniformLocation(program, "u_brightness"),
+      contrast: gl.getUniformLocation(program, "u_contrast"),
+      film: gl.getUniformLocation(program, "u_film"),
+      filmGrain: gl.getUniformLocation(program, "u_filmGrain"),
+      filmWarmth: gl.getUniformLocation(program, "u_filmWarmth"),
+      gradient: gl.getUniformLocation(program, "u_gradient"),
+      gradientBias: gl.getUniformLocation(program, "u_gradientBias"),
+      ascii: gl.getUniformLocation(program, "u_ascii"),
+      asciiDensity: gl.getUniformLocation(program, "u_asciiDensity"),
+      asciiTileAspect: gl.getUniformLocation(program, "u_asciiTileAspect"),
+      asciiCharacterColor: gl.getUniformLocation(program, "u_asciiCharacterColor"),
+      asciiBackgroundColor: gl.getUniformLocation(program, "u_asciiBackgroundColor"),
+      asciiInvert: gl.getUniformLocation(program, "u_asciiInvert"),
+      asciiOverlay: gl.getUniformLocation(program, "u_asciiOverlay"),
+      asciiCutDarks: gl.getUniformLocation(program, "u_asciiCutDarks"),
+      asciiCutLights: gl.getUniformLocation(program, "u_asciiCutLights"),
+      leak: gl.getUniformLocation(program, "u_leak"),
+      leakPosition: gl.getUniformLocation(program, "u_leakPosition"),
+      prism: gl.getUniformLocation(program, "u_prism"),
+      prismDirection: gl.getUniformLocation(program, "u_prismDirection"),
+    },
+    render(processedSource, cleanSource, width, height, phase, amounts, context) {
+      gl.viewport(0, 0, width, height);
+      gl.useProgram(program);
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, position);
+      gl.enableVertexAttribArray(this.attributes.position);
+      gl.vertexAttribPointer(this.attributes.position, 2, gl.FLOAT, false, 0, 0);
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, texCoord);
+      gl.enableVertexAttribArray(this.attributes.texCoord);
+      gl.vertexAttribPointer(this.attributes.texCoord, 2, gl.FLOAT, false, 0, 0);
+
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, processedSource);
+
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, sourceTexture);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, cleanSource);
+
+      gl.activeTexture(gl.TEXTURE2);
+      gl.bindTexture(gl.TEXTURE_2D, asciiTexture);
+
+      gl.uniform1i(this.uniforms.texture, 0);
+      gl.uniform1i(this.uniforms.sourceTexture, 1);
+      gl.uniform1i(this.uniforms.asciiAtlas, 2);
+      gl.uniform1f(this.uniforms.asciiCharCount, this.asciiCharCount);
+      gl.uniform2f(this.uniforms.resolution, width, height);
+      gl.uniform1f(this.uniforms.phase, phase);
+      gl.uniform1f(this.uniforms.patternSize, context.patternSizeScale);
+      gl.uniform1f(this.uniforms.threshold, context.thresholdNorm);
+      gl.uniform1f(this.uniforms.errorStrength, context.errorStrength);
+      gl.uniform1f(this.uniforms.depth, context.depth);
+      gl.uniform1f(this.uniforms.brightness, context.brightnessNorm);
+      gl.uniform1f(this.uniforms.contrast, context.contrastNorm);
+      gl.uniform1f(this.uniforms.film, amounts.film);
+      gl.uniform1f(this.uniforms.filmGrain, amounts.filmGrain);
+      gl.uniform1f(this.uniforms.filmWarmth, amounts.filmWarmth);
+      gl.uniform1f(this.uniforms.gradient, amounts.gradient);
+      gl.uniform1f(this.uniforms.gradientBias, amounts.gradientBias);
+      gl.uniform1f(this.uniforms.ascii, amounts.ascii);
+      gl.uniform1f(this.uniforms.asciiDensity, amounts.asciiDensity);
+      gl.uniform1f(this.uniforms.asciiTileAspect, amounts.asciiTileAspect);
+      gl.uniform3f(this.uniforms.asciiCharacterColor, amounts.asciiCharacterColor[0], amounts.asciiCharacterColor[1], amounts.asciiCharacterColor[2]);
+      gl.uniform3f(this.uniforms.asciiBackgroundColor, amounts.asciiBackgroundColor[0], amounts.asciiBackgroundColor[1], amounts.asciiBackgroundColor[2]);
+      gl.uniform1f(this.uniforms.asciiInvert, amounts.asciiInvert);
+      gl.uniform1f(this.uniforms.asciiOverlay, amounts.asciiOverlay);
+      gl.uniform1f(this.uniforms.asciiCutDarks, amounts.asciiCutDarks);
+      gl.uniform1f(this.uniforms.asciiCutLights, amounts.asciiCutLights);
+      gl.uniform1f(this.uniforms.leak, amounts.leak);
+      gl.uniform1f(this.uniforms.leakPosition, amounts.leakPosition);
+      gl.uniform1f(this.uniforms.prism, amounts.prism);
+      gl.uniform1f(this.uniforms.prismDirection, amounts.prismDirection);
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+    },
+  };
+
+  return shaderRenderer;
+}
+
+function createShaderProgram(gl, vertexSource, fragmentSource) {
+  const vertexShader = compileShader(gl, gl.VERTEX_SHADER, vertexSource);
+  const fragmentShader = compileShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
+  if (!vertexShader || !fragmentShader) return null;
+
+  const program = gl.createProgram();
+  gl.attachShader(program, vertexShader);
+  gl.attachShader(program, fragmentShader);
+  gl.linkProgram(program);
+
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+    controls.statusText.textContent = `WebGL shader link failed: ${gl.getProgramInfoLog(program)}`;
+    gl.deleteProgram(program);
+    return null;
+  }
+  return program;
+}
+
+function compileShader(gl, type, source) {
+  const shader = gl.createShader(type);
+  gl.shaderSource(shader, source);
+  gl.compileShader(shader);
+  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+    controls.statusText.textContent = `WebGL shader compile failed: ${gl.getShaderInfoLog(shader)}`;
+    gl.deleteShader(shader);
+    return null;
+  }
+  return shader;
+}
+
+function createAsciiAtlas() {
+  const chars = " .:-=+*#%@";
+  const cellWidth = 28;
+  const cellHeight = 36;
+  const canvas = document.createElement("canvas");
+  canvas.width = cellWidth * chars.length;
+  canvas.height = cellHeight;
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "700 27px Consolas, Monaco, 'Courier New', monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  chars.split("").forEach((char, index) => {
+    ctx.fillText(char, index * cellWidth + cellWidth / 2, cellHeight * 0.55);
+  });
+  return { canvas, charCount: chars.length };
+}
+
+function shaderVertexSource() {
+  return `
+attribute vec2 a_position;
+attribute vec2 a_texCoord;
+varying vec2 v_uv;
+void main() {
+  v_uv = a_texCoord;
+  gl_Position = vec4(a_position, 0.0, 1.0);
+}`;
+}
+
+function shaderFragmentSource() {
+  return `
+precision mediump float;
+uniform sampler2D u_texture;
+uniform sampler2D u_sourceTexture;
+uniform sampler2D u_asciiAtlas;
+uniform float u_asciiCharCount;
+uniform vec2 u_resolution;
+uniform float u_phase;
+uniform float u_patternSize;
+uniform float u_threshold;
+uniform float u_errorStrength;
+uniform float u_depth;
+uniform float u_brightness;
+uniform float u_contrast;
+uniform float u_film;
+uniform float u_filmGrain;
+uniform float u_filmWarmth;
+uniform float u_gradient;
+uniform float u_gradientBias;
+uniform float u_ascii;
+uniform float u_asciiDensity;
+uniform float u_asciiTileAspect;
+uniform vec3 u_asciiCharacterColor;
+uniform vec3 u_asciiBackgroundColor;
+uniform float u_asciiInvert;
+uniform float u_asciiOverlay;
+uniform float u_asciiCutDarks;
+uniform float u_asciiCutLights;
+uniform float u_leak;
+uniform float u_leakPosition;
+uniform float u_prism;
+uniform float u_prismDirection;
+varying vec2 v_uv;
+
+float hash(vec2 p) {
+  return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+}
+
+float luminance3(vec3 color) {
+  return dot(color, vec3(0.299, 0.587, 0.114));
+}
+
+vec3 readSource(vec2 uv) {
+  return texture2D(u_texture, clamp(uv, 0.0, 1.0)).rgb;
+}
+
+vec3 readCleanSource(vec2 uv) {
+  return texture2D(u_sourceTexture, clamp(uv, 0.0, 1.0)).rgb;
+}
+
+vec3 gradientMap(float luma) {
+  vec3 dark = vec3(0.035, 0.02, 0.09);
+  vec3 mid = vec3(0.02, 0.82, 0.88);
+  vec3 hot = vec3(1.0, 0.22, 0.72);
+  vec3 high = vec3(1.0, 0.92, 0.64);
+  vec3 a = mix(dark, mid, smoothstep(0.0, 0.58, luma));
+  vec3 b = mix(hot, high, smoothstep(0.58, 1.0, luma));
+  return mix(a, b, smoothstep(0.42, 0.88, luma));
+}
+
+float asciiGlyph(vec2 local, float luma, float variant) {
+  float charIndex = floor(clamp(luma + (variant - 0.5) * 0.08, 0.0, 0.999) * u_asciiCharCount);
+  vec2 atlasUv = vec2((charIndex + local.x) / u_asciiCharCount, local.y);
+  return texture2D(u_asciiAtlas, atlasUv).a;
+}
+
+void main() {
+  vec2 uv = v_uv;
+  float t = u_phase;
+  float prismSign = mix(-1.0, 1.0, step(0.5, u_prismDirection));
+  float wave = sin((uv.y + u_prismDirection * 0.35) * 55.0 + t * 2.0) * 0.0065 * u_prism * (0.6 + u_patternSize * 0.28) * prismSign;
+  float breathe = sin(t + uv.y * 5.0) * 0.0018 * u_prism * (0.8 + u_errorStrength * 0.25);
+  vec3 color;
+  color.r = readSource(uv + vec2(wave + breathe + 0.006 * u_prism, 0.0)).r;
+  color.g = readSource(uv + vec2(wave * 0.35, 0.0)).g;
+  color.b = readSource(uv - vec2(wave + 0.006 * u_prism, 0.0)).b;
+
+  float luma = luminance3(color);
+  vec2 pixel = uv * u_resolution;
+  float grain = hash(pixel + vec2(t * 37.0, t * 19.0)) - 0.5;
+
+  vec3 filmTone = color;
+  filmTone = (filmTone - 0.5) * (1.0 + u_contrast * 0.42) + 0.5 + u_brightness * 0.12;
+  filmTone = pow(max(filmTone, vec3(0.0)), vec3(0.92, 0.86, 0.8));
+  filmTone *= vec3(1.0 + u_filmWarmth * 0.18 + u_depth * 0.004, 0.98, 1.0 - u_filmWarmth * 0.22 - u_depth * 0.004);
+  filmTone += grain * (0.02 + u_filmGrain * 0.12 + u_errorStrength * 0.05 + luma * 0.08);
+  float scratch = step(0.992 - u_errorStrength * 0.002, hash(vec2(floor(pixel.x / 2.0), floor(t * 18.0)))) * (1.0 - smoothstep(0.0, 0.95, uv.y));
+  filmTone += scratch * vec3(0.16, 0.12, 0.08);
+  color = mix(color, filmTone, clamp(u_film, 0.0, 1.0));
+
+  float gradedLuma = smoothstep(max(0.0, u_threshold - 0.38), min(1.0, u_threshold + 0.38), luma + u_brightness * 0.14 + (u_gradientBias - 0.5) * 0.22);
+  vec3 mapped = gradientMap(gradedLuma);
+  color = mix(color, mapped * (0.62 + luma * 0.72), clamp(u_gradient, 0.0, 1.0));
+
+  if (u_ascii > 0.001) {
+    float density = clamp(u_ascii * u_asciiDensity, 0.0, 1.35);
+    float cellHeight = mix(22.0, 9.0, density) * clamp(u_patternSize, 0.5, 4.0);
+    vec2 cellSize = vec2(cellHeight * clamp(u_asciiTileAspect, 0.35, 1.2), cellHeight);
+    vec2 cellId = floor(pixel / cellSize);
+    vec2 local = fract(pixel / cellSize);
+    vec2 sampleUv = (cellId * cellSize + cellSize * 0.5) / u_resolution;
+    vec3 sampled = readCleanSource(sampleUv);
+    float sampledLuma = luminance3(sampled);
+    sampledLuma = (sampledLuma - u_threshold) * (1.25 + u_contrast * 0.75) + 0.5 + u_brightness * 0.16;
+    sampledLuma = mix(sampledLuma, 1.0 - sampledLuma, step(0.5, u_asciiInvert));
+    sampledLuma = smoothstep(u_asciiCutDarks, 1.0 - u_asciiCutLights, sampledLuma);
+    sampledLuma = smoothstep(0.035, 0.96, pow(clamp(sampledLuma, 0.0, 1.0), 0.82));
+    float cellNoise = hash(cellId + floor(t * 3.0));
+    float mask = asciiGlyph(local, sampledLuma, cellNoise);
+    float paper = smoothstep(0.03, 0.18 + (1.0 - u_errorStrength) * 0.12, sampledLuma);
+    float ink = mask * paper * (0.64 + sampledLuma * 0.56 + u_depth * 0.012);
+    vec3 glyphColor = mix(u_asciiBackgroundColor, u_asciiCharacterColor, clamp(ink, 0.0, 1.0));
+    glyphColor += u_asciiCharacterColor * 0.08 * mask * cellNoise;
+    float asciiMix = smoothstep(0.06, 0.72, u_ascii);
+    vec3 overlayColor = mix(color, glyphColor, clamp(ink * 1.2, 0.0, 1.0));
+    color = mix(mix(color, glyphColor, asciiMix), overlayColor, u_asciiOverlay);
+  }
+
+  vec2 leakCenter = vec2(0.08 + 0.84 * u_leakPosition, 0.14 + 0.72 * (0.5 + 0.5 * cos(t * 0.53 + u_leakPosition * 6.283)));
+  float leak = 1.0 - smoothstep(0.0, 0.9, distance(uv, leakCenter));
+  vec3 leakColor = mix(vec3(1.0, 0.18, 0.04), vec3(0.0, 0.72, 1.0), smoothstep(0.2, 0.9, uv.x));
+  color += leakColor * leak * leak * (0.38 + max(0.0, u_brightness) * 0.22 + u_errorStrength * 0.12) * u_leak;
+
+  float vignette = 1.0 - smoothstep(0.22, 0.92, distance(uv, vec2(0.5)));
+  color *= mix(1.0, 0.72 + vignette * 0.42, clamp(u_film + u_leak, 0.0, 1.0));
+  color += grain * 0.045 * max(max(u_film, u_gradient), u_ascii);
+
+  gl_FragColor = vec4(clamp(color, 0.0, 1.0), 1.0);
+}`;
 }
 
 function blurImage(imageData, radius) {
@@ -1744,7 +2339,8 @@ function extractPalette() {
 }
 
 function addEffect() {
-  state.effects.push({ type: controls.effectSelect.value, amount: 0.55 });
+  const type = controls.effectSelect.value;
+  state.effects.push({ type, amount: 0.55, params: effectDefaultParams(type) });
   state.selectedEffectIndex = state.effects.length - 1;
   renderEffectStack();
   syncSeedToSettings();
@@ -1752,6 +2348,9 @@ function addEffect() {
 }
 
 function renderEffectStack() {
+  state.effects.forEach((effect) => {
+    if (!effect.params) effect.params = effectDefaultParams(effect.type);
+  });
   controls.effectStack.innerHTML = "";
   if (!state.effects.length) {
     state.selectedEffectIndex = -1;
@@ -1819,28 +2418,143 @@ function removeEffect(index) {
   scheduleRender();
 }
 
-function updateSelectedEffectAmount() {
-  const effect = state.effects[state.selectedEffectIndex];
+function updateEffectAmount(index, value) {
+  const effect = state.effects[index];
   if (!effect) return;
-  effect.amount = Number(controls.selectedEffectAmount.value);
-  updateEffectEditor();
+  effect.amount = Number(value);
+  syncSeedToSettings();
+  scheduleRender();
+}
+
+function updateEffectParam(index, key, value) {
+  const effect = state.effects[index];
+  if (!effect) return;
+  effect.params = { ...effectDefaultParams(effect.type), ...(effect.params || {}) };
+  effect.params[key] = value;
   syncSeedToSettings();
   scheduleRender();
 }
 
 function updateEffectEditor() {
-  const effect = state.effects[state.selectedEffectIndex];
-  controls.effectEditor.classList.toggle("hidden", !effect);
-  if (!effect) return;
+  controls.effectEditors.innerHTML = "";
+
+  if (!state.effects.length) {
+    const note = document.createElement("p");
+    note.className = "empty-note";
+    note.textContent = "Add an effect to edit its layer controls here.";
+    controls.effectEditors.append(note);
+    return;
+  }
+
+  state.effects.forEach((effect, index) => {
+    effect.params = sanitizeEffectParams(effect.type, effect.params);
+    controls.effectEditors.append(createEffectEditorCard(effect, index));
+  });
+}
+
+function createEffectEditorCard(effect, index) {
+  const card = document.createElement("article");
+  card.className = `effect-editor-card${index === state.selectedEffectIndex ? " selected" : ""}`;
+
+  const heading = document.createElement("div");
+  heading.className = "effect-editor-heading";
+  heading.addEventListener("click", () => {
+    if (index !== state.selectedEffectIndex) selectEffect(index);
+  });
+  const title = document.createElement("h3");
+  title.textContent = effectName(effect.type);
+  const layer = document.createElement("span");
+  layer.textContent = `Layer ${index + 1}`;
+  heading.append(title, layer);
 
   const meta = effectParamMeta(effect.type);
-  controls.selectedEffectName.textContent = effectName(effect.type);
-  controls.selectedEffectParam.textContent = meta.label;
-  controls.selectedEffectAmount.min = meta.min;
-  controls.selectedEffectAmount.max = meta.max;
-  controls.selectedEffectAmount.step = meta.step;
-  controls.selectedEffectAmount.value = String(effect.amount);
-  controls.selectedEffectValue.textContent = meta.format(effect.amount);
+  const strength = document.createElement("label");
+  strength.className = "control";
+  const strengthText = document.createElement("span");
+  const strengthName = document.createElement("span");
+  strengthName.textContent = meta.label;
+  const strengthValue = document.createElement("em");
+  strengthValue.textContent = meta.format(effect.amount);
+  strengthText.append(strengthName, strengthValue);
+  const strengthInput = document.createElement("input");
+  strengthInput.type = "range";
+  strengthInput.min = meta.min;
+  strengthInput.max = meta.max;
+  strengthInput.step = meta.step;
+  strengthInput.value = String(effect.amount);
+  strengthInput.addEventListener("input", () => {
+    effect.amount = Number(strengthInput.value);
+    strengthValue.textContent = meta.format(effect.amount);
+    updateEffectAmount(index, effect.amount);
+  });
+  strength.append(strengthText, strengthInput);
+
+  const customControls = document.createElement("div");
+  customControls.className = "custom-controls";
+  renderEffectCustomControls(effect, index, customControls);
+  card.append(heading, strength, customControls);
+  return card;
+}
+
+function renderEffectCustomControls(effect, index, target) {
+  const definitions = effectParamDefinitions(effect.type);
+  if (!definitions.length) {
+    const note = document.createElement("p");
+    note.className = "empty-note";
+    note.textContent = "This layer uses the global controls above plus strength.";
+    target.append(note);
+    return;
+  }
+
+  definitions.forEach((definition) => {
+    const value = effect.params?.[definition.key] ?? definition.value;
+    const label = document.createElement("label");
+    label.className = definition.type === "checkbox" ? "toggle" : "control";
+
+    if (definition.type === "checkbox") {
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.checked = Boolean(value);
+      input.addEventListener("change", () => updateEffectParam(index, definition.key, input.checked));
+      const span = document.createElement("span");
+      span.textContent = definition.label;
+      label.append(input, span);
+      target.append(label);
+      return;
+    }
+
+    const labelText = document.createElement("span");
+    const labelName = document.createElement("span");
+    labelName.textContent = definition.label;
+    labelText.append(labelName);
+    const input = document.createElement("input");
+    input.type = definition.type;
+    if (definition.type === "range") {
+      input.min = definition.min;
+      input.max = definition.max;
+      input.step = definition.step;
+      const valueText = document.createElement("em");
+      valueText.textContent = formatCustomParamValue(definition, value);
+      labelText.append(valueText);
+      input.addEventListener("input", () => {
+        const nextValue = Number(input.value);
+        valueText.textContent = formatCustomParamValue(definition, nextValue);
+        updateEffectParam(index, definition.key, nextValue);
+      });
+    } else {
+      input.addEventListener("input", () => updateEffectParam(index, definition.key, input.value));
+    }
+    input.value = String(value);
+    label.append(labelText, input);
+    target.append(label);
+  });
+}
+
+function formatCustomParamValue(definition, value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return String(value);
+  if (definition.max === "1" || definition.max === "1.2" || definition.max === "1.4") return number.toFixed(2);
+  return `${Math.round(number * 100)}%`;
 }
 
 function effectParamMeta(type) {
@@ -1856,8 +2570,139 @@ function effectParamMeta(type) {
     vignette: { label: "Falloff", min: "0", max: "1.5", step: "0.01", format: percent },
     noise: { label: "Noise", min: "0", max: "1.5", step: "0.01", format: percent },
     cmyk: { label: "Plate Offset", min: "0", max: "1.5", step: "0.01", format: percent },
+    film: { label: "Film Response", min: "0", max: "1.5", step: "0.01", format: percent },
+    gradient: { label: "Gradient Mix", min: "0", max: "1.5", step: "0.01", format: percent },
+    "ascii-shader": { label: "Glyph Density", min: "0", max: "1.5", step: "0.01", format: percent },
+    "light-leak": { label: "Leak Intensity", min: "0", max: "1.5", step: "0.01", format: percent },
+    prism: { label: "Smear Width", min: "0", max: "1.5", step: "0.01", format: percent },
   };
   return metas[type] || { label: "Strength", min: "0", max: "1.5", step: "0.01", format: percent };
+}
+
+function effectDefaultParams(type) {
+  const defaults = {
+    "ascii-shader": {
+      density: 0.75,
+      tileAspect: 0.58,
+      characterColor: "#ffffff",
+      backgroundColor: "#000000",
+      invert: false,
+      overlay: false,
+      cutDarks: 0.03,
+      cutLights: 0,
+    },
+    film: { grain: 0.55, warmth: 0.45 },
+    gradient: { bias: 0.5 },
+    "light-leak": { position: 0.5 },
+    prism: { direction: 0.5 },
+  };
+  const detailLabels = effectDetailLabels();
+  if (detailLabels[type]) return { detail: 1 };
+  return { ...(defaults[type] || {}) };
+}
+
+function effectParamDefinitions(type) {
+  const definitions = {
+    "ascii-shader": [
+      { key: "density", label: "Density", type: "range", min: "0.15", max: "1.4", step: "0.01", value: 0.75 },
+      { key: "tileAspect", label: "Tile Aspect", type: "range", min: "0.35", max: "1.2", step: "0.01", value: 0.58 },
+      { key: "characterColor", label: "Character Color", type: "color", value: "#ffffff" },
+      { key: "backgroundColor", label: "Background Color", type: "color", value: "#000000" },
+      { key: "invert", label: "Invert", type: "checkbox", value: false },
+      { key: "overlay", label: "Overlay On Image", type: "checkbox", value: false },
+      { key: "cutDarks", label: "Cut Darks", type: "range", min: "0", max: "0.35", step: "0.01", value: 0.03 },
+      { key: "cutLights", label: "Cut Lights", type: "range", min: "0", max: "0.35", step: "0.01", value: 0 },
+    ],
+    film: [
+      { key: "grain", label: "Grain", type: "range", min: "0", max: "1", step: "0.01", value: 0.55 },
+      { key: "warmth", label: "Warmth", type: "range", min: "0", max: "1", step: "0.01", value: 0.45 },
+    ],
+    gradient: [
+      { key: "bias", label: "Tone Bias", type: "range", min: "0", max: "1", step: "0.01", value: 0.5 },
+    ],
+    "light-leak": [
+      { key: "position", label: "Position", type: "range", min: "0", max: "1", step: "0.01", value: 0.5 },
+    ],
+    prism: [
+      { key: "direction", label: "Direction", type: "range", min: "0", max: "1", step: "0.01", value: 0.5 },
+    ],
+  };
+  const detailLabels = effectDetailLabels();
+  if (!definitions[type] && detailLabels[type]) {
+    return [{ key: "detail", label: detailLabels[type], type: "range", min: "0.35", max: "2", step: "0.01", value: 1 }];
+  }
+  return definitions[type] || [];
+}
+
+function effectDetailLabels() {
+  return {
+    epsilon: "Glow Scale",
+    blur: "Radius Scale",
+    trail: "Trail Scale",
+    bloom: "Bloom Scale",
+    jpeg: "Block Scale",
+    chromatic: "Split Scale",
+    scanlines: "Line Scale",
+    vignette: "Falloff Scale",
+    noise: "Noise Scale",
+    cmyk: "Plate Scale",
+  };
+}
+
+function sanitizeEffectParams(type, params) {
+  const clean = effectDefaultParams(type);
+  const definitions = effectParamDefinitions(type);
+  const incoming = params && typeof params === "object" ? params : {};
+
+  definitions.forEach((definition) => {
+    if (!(definition.key in incoming)) return;
+    if (definition.type === "checkbox") {
+      clean[definition.key] = Boolean(incoming[definition.key]);
+    } else if (definition.type === "range") {
+      const value = Number(incoming[definition.key]);
+      const min = Number(definition.min);
+      const max = Number(definition.max);
+      clean[definition.key] = Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : definition.value;
+    } else if (definition.type === "color") {
+      clean[definition.key] = normalizeColor(incoming[definition.key], definition.value);
+    }
+  });
+
+  return clean;
+}
+
+function randomEffectParams(type, rng) {
+  const params = effectDefaultParams(type);
+  if (type === "ascii-shader") {
+    params.density = Number(fixed(0.45 + rng() * 0.65, 2));
+    params.tileAspect = Number(fixed(0.48 + rng() * 0.28, 2));
+    params.invert = rng() > 0.82;
+    params.overlay = rng() > 0.75;
+    params.cutDarks = Number(fixed(rng() * 0.12, 2));
+    params.cutLights = Number(fixed(rng() * 0.08, 2));
+  }
+  if (type === "film") {
+    params.grain = Number(fixed(0.25 + rng() * 0.65, 2));
+    params.warmth = Number(fixed(0.2 + rng() * 0.65, 2));
+  }
+  if (type === "gradient") params.bias = Number(fixed(0.2 + rng() * 0.65, 2));
+  if (type === "light-leak") params.position = Number(fixed(rng(), 2));
+  if (type === "prism") params.direction = Number(fixed(rng(), 2));
+  if ("detail" in params) params.detail = Number(fixed(0.65 + rng() * 0.75, 2));
+  return params;
+}
+
+function normalizeColor(value, fallback) {
+  return typeof value === "string" && /^#[0-9a-fA-F]{6}$/.test(value) ? value : fallback;
+}
+
+function hexToUnitRgb(hex) {
+  const color = normalizeColor(hex, "#ffffff").slice(1);
+  return [
+    parseInt(color.slice(0, 2), 16) / 255,
+    parseInt(color.slice(2, 4), 16) / 255,
+    parseInt(color.slice(4, 6), 16) / 255,
+  ];
 }
 
 function effectName(type) {
@@ -1872,6 +2717,11 @@ function effectName(type) {
     vignette: "Vignette",
     noise: "Signal Noise",
     cmyk: "CMYK Halftone",
+    film: "Analog Film",
+    gradient: "Gradient Map",
+    "ascii-shader": "ASCII Matrix",
+    "light-leak": "Light Leak",
+    prism: "Prism Smear",
   }[type] || type;
 }
 
